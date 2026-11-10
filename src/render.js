@@ -1,4 +1,4 @@
-import { WIDTH, HEIGHT, PATTERNS } from "./patterns.js";
+import { WIDTH, HEIGHT, PATTERNS, PATTERN_TEMPO } from "./patterns.js";
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -77,14 +77,18 @@ export class Renderer {
         c.setLineDash([5, 6]);
         c.lineWidth = 1.5;
         if (h.kind === "laser") {
-          c.fillStyle = h.color + "10";
+          c.fillStyle = `rgba(${parseInt(h.color.slice(1, 3), 16)},${parseInt(h.color.slice(3, 5), 16)},${parseInt(h.color.slice(5, 7), 16)},${0.06 + (0.12 * h.age) / h.warning})`;
           c.fillRect(h.x, h.y, h.w, h.h);
           c.strokeRect(h.x, h.y, h.w, h.h);
           c.setLineDash([]);
           c.fillStyle = h.color;
-          c.font = "10px monospace";
+          c.font = "15px monospace";
           c.textAlign = "center";
-          c.fillText("!", h.x + h.w / 2, Math.max(25, h.y + h.h / 2));
+          c.fillText(
+            `${Math.max(0, (h.warning - h.age) / PATTERN_TEMPO).toFixed(1)}s`,
+            h.w < h.h ? h.x + h.w / 2 : WIDTH - 38,
+            h.w < h.h ? 38 : h.y + h.h / 2 + 5,
+          );
         } else if (h.kind === "circle") {
           const x = Math.max(14, Math.min(WIDTH - 14, h.x)),
             y = Math.max(14, Math.min(HEIGHT - 14, h.y));
@@ -94,13 +98,13 @@ export class Renderer {
         } else {
           if (h.vy) {
             c.beginPath();
-            c.moveTo(h.x, 14);
-            c.lineTo(h.x + h.w, 14);
+            c.moveTo(h.x, h.vy > 0 ? 14 : HEIGHT - 14);
+            c.lineTo(h.x + h.w, h.vy > 0 ? 14 : HEIGHT - 14);
             c.stroke();
           } else {
             c.beginPath();
-            c.moveTo(14, h.y);
-            c.lineTo(14, h.y + h.h);
+            c.moveTo(h.vx > 0 ? 14 : WIDTH - 14, h.y);
+            c.lineTo(h.vx > 0 ? 14 : WIDTH - 14, h.y + h.h);
             c.stroke();
           }
         }

@@ -7,6 +7,7 @@ import {
   difficulty,
   PATTERN_DURATION,
   PATTERN_TEMPO,
+  LASER_MIN_WARNING,
 } from "../src/patterns.js";
 import { readBest, saveBest, formatTime } from "../src/storage.js";
 function rng(seed = 1) {
@@ -145,7 +146,7 @@ test("five full seconds of attacks finish naturally, preview and then connect wi
           previews++;
           assert(g.stageTime >= 5 - 1e-7);
           assert(
-            g.wave >= [7, 4, 6, 4][g.pattern],
+            g.wave >= [7, 4, 3, 4][g.pattern],
             `pattern ${g.pattern} must launch enough waves: ${g.wave}`,
           );
           lastWave = g.wave;
@@ -228,33 +229,157 @@ test("next opening inherits exit lane and previous pattern fully finishes", () =
   assert.equal(g.hazards.length, 0);
   g.update(1 / 120);
   const [a, b] = g.hazards;
-  assert(Math.abs((a.w + b.x) / 2 - 390) < 1);
+  assert(Math.abs(a.vy ? (a.w + b.x) / 2 - 390 : (a.h + b.y) / 2 - 320) < 1);
   assert(g.hazards.every((h) => h.age < h.warning));
 });
-test("choreography changes rain direction, connects gates and alternates pulse/fan attacks", () => {
-  function wave(pattern, n) {
-    const g = new Game({ random: rng(3) });
+test("seeded runs reproduce but fresh runs vary all four pattern families", () => {
+  function trace(seed, pattern) {
+    const g = new Game({ random: rng(seed) });
     g.start();
-    g.stageTime = 0;
     g.pattern = pattern;
-    g.wave = n;
+    g.stageTime = 0;
     g.time = 20;
-    g.stage = pattern;
-    spawnWave(g);
-    return g.hazards;
+    const result = [];
+    for (let i = 0; i < 5; i++) {
+      g.wave = i;
+      const start = g.hazards.length;
+      const interval = spawnWave(g);
+      result.push({ interval, hazards: g.hazards.slice(start) });
+    }
+    return JSON.stringify(result);
   }
-  assert(wave(0, 0)[0].vx * wave(0, 2)[0].vx < 0);
-  const first = wave(1, 0),
-    second = wave(1, 1);
-  assert(first.every((h) => h.vy > 0) && second.every((h) => h.vy > 0));
+  for (let p = 0; p < 4; p++) {
+    assert.equal(trace(42, p), trace(42, p));
+    const variants = new Set(
+      Array.from({ length: 100 }, (_, i) => trace(i + 1, p)),
+    );
+    assert(variants.size >= 95, `pattern ${p} repeats too often`);
+  }
+  const g = new Game({ random: rng(4) });
+  g.start();
+  const plan = JSON.stringify(g.plan);
+  g.start();
+  assert.notEqual(JSON.stringify(g.plan), plan);
+});
+test("gate paths reach edges from all four entrances and consecutive openings remain reachable", () => {
+  const entrances = new Set();
+  let edgeRuns = 0,
+    minimum = 1,
+    maximum = 0;
+  for (let seed = 1; seed <= 200; seed++) {
+    const g = new Game({ random: rng(seed) });
+    g.start();
+    g.pattern = 1;
+    g.time = 60;
+    g.stageTime = 0;
+    let last = null,
+      lastInterval = null,
+      edges = false;
+    for (let w = 0; g.stageTime < 5; w++) {
+      g.wave = w;
+      g.hazards = [];
+      const interval = spawnWave(g);
+      const [a, b] = g.hazards;
+      const axis = a.vy !== 0,
+        range = axis ? 640 : 600,
+        span = axis ? 600 : 640;
+      const center = axis ? (a.w + b.x) / 2 : (a.h + b.y) / 2;
+      const gap = axis ? b.x - a.w : b.y - a.h;
+      const entry = axis
+        ? a.vy > 0
+          ? "top"
+          : "bottom"
+        : a.vx > 0
+          ? "left"
+          : "right";
+      entrances.add(entry);
+      assert(gap >= 125 && gap <= 164);
+      assert(center - gap / 2 >= 21.9);
+      assert(center + gap / 2 <= span - 21.9);
+      if (last !== null)
+        assert(
+          Math.abs(center - last) <= PLAYER_SPEED * lastInterval * 0.7 + 1e-8,
+          "corridor jumped beyond reachable distance",
+        );
+      assert(
+        g.hazards.every(
+          (h) => Number.isFinite(h.life) && h.life / PATTERN_TEMPO < 3,
+        ),
+      );
+      const normalized = center / span;
+      minimum = Math.min(minimum, normalized);
+      maximum = Math.max(maximum, normalized);
+      edges ||= normalized < 0.21 || normalized > 0.79;
+      last = center;
+      lastInterval = interval;
+      g.stageTime += interval;
+    }
+    if (edges) edgeRuns++;
+  }
+  assert.equal(entrances.size, 4);
+  assert(minimum < 0.18 && maximum > 0.82);
   assert(
-    Math.abs((first[1].x + first[0].w) / 2 - (second[1].x + second[0].w) / 2) <
-      50,
+    edgeRuns >= 170,
+    `only ${edgeRuns} of 200 gate sequences reached an edge`,
   );
-  assert(wave(2, 0)[0].h > wave(2, 0)[0].w);
-  assert(wave(2, 1)[0].w > wave(2, 1)[0].h);
-  assert(wave(3, 0).every((h) => h.x === 0));
-  assert(wave(3, 1).every((h) => h.x === 600));
+});
+test("lasers allow a 350ms reaction, maintain warning floor and never stack waves", () => {
+  for (let seed = 1; seed <= 100; seed++) {
+    const g = new Game({ random: rng(seed) });
+    g.start();
+    g.pattern = 2;
+    g.stage = 2;
+    g.stageTime = 0;
+    g.spawnIn = 0;
+    g.time = seed * 5;
+    g.player.x = [12, 300, 588][seed % 3];
+    g.player.y = [12, 410, 628][Math.floor(seed / 3) % 3];
+    let laser = null,
+      reaction = 0,
+      target = null,
+      shots = 0;
+    for (let f = 0; f < 120 * 8 && g.stage === 2; f++) {
+      if (g.hazards[0] !== laser) {
+        laser = g.hazards[0];
+        reaction = 0;
+        target = null;
+        if (laser) {
+          shots++;
+          assert(laser.warning / PATTERN_TEMPO >= LASER_MIN_WARNING);
+          assert(laser.warning / PATTERN_TEMPO <= 1.1);
+        }
+      }
+      assert(g.hazards.length <= 1, "laser waves overlap");
+      if (laser) {
+        reaction += 1 / 120;
+        if (reaction >= 0.35 && !target) {
+          const vertical = laser.h > laser.w,
+            min = vertical ? laser.x : laser.y,
+            max = min + (vertical ? laser.w : laser.h),
+            value = vertical ? g.player.x : g.player.y,
+            limit = vertical ? 600 : 640;
+          const left = min - 16,
+            right = max + 16;
+          const candidates = [left, right].filter(
+            (v) => v >= 12 && v <= limit - 12,
+          );
+          const exit = candidates.sort(
+            (a, b) => Math.abs(a - value) - Math.abs(b - value),
+          )[0];
+          target = vertical
+            ? { x: exit, y: g.player.y }
+            : { x: g.player.x, y: exit };
+        }
+      }
+      g.update(1 / 120, target ? { target } : undefined);
+      assert.equal(
+        g.state,
+        "playing",
+        `laser unavoidable after normal reaction on seed ${seed}`,
+      );
+    }
+    assert(shots >= 3 && shots <= 4);
+  }
 });
 test("obstacle motion and lifecycle use double tempo while player and score stay real-time", () => {
   const g = new Game();
@@ -279,7 +404,7 @@ test("obstacle motion and lifecycle use double tempo while player and score stay
   const initial = new Game();
   initial.start();
   const interval = spawnWave(initial);
-  assert(Math.abs(interval - 0.6) < 1e-8);
+  assert(interval >= 0.54 && interval <= 0.66);
   assert.equal(PATTERN_TEMPO, 2);
 });
 test("patterns leave gaps, telegraph danger and difficulty converges", () => {
@@ -296,9 +421,9 @@ test("patterns leave gaps, telegraph danger and difficulty converges", () => {
       if (phase === 1) {
         const [a, b] = g.hazards;
         const gap = a.vy ? b.x - (a.x + a.w) : b.y - (a.y + a.h);
-        assert(gap >= 150);
+        assert(gap >= 125);
       }
-      if (phase === 2) assert.equal(g.hazards.length, 2);
+      if (phase === 2) assert.equal(g.hazards.length, 1);
     }
   assert(difficulty(200) > difficulty(20));
   assert(difficulty(1e6) <= 2.35);

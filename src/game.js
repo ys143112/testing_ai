@@ -5,6 +5,7 @@ import {
   PATTERN_DURATION,
   PATTERN_TEMPO,
   spawnWave,
+  createPatternPlan,
 } from "./patterns.js";
 export const PLAYER_SPEED = 250;
 export class Game {
@@ -21,6 +22,7 @@ export class Game {
     this.handoff = false;
     this.preview = false;
     this.route = { x: 0.5, y: 0.64 };
+    this.plan = createPatternPlan(this.random, this.route);
     this.pattern = 0;
     this.wave = 0;
     this.spawnIn = 2;
@@ -159,9 +161,10 @@ export class Game {
       // Carry the player's exit lane into the next pattern's opening. Inputs
       // and trail persist so the movement never feels interrupted.
       this.route = {
-        x: clamp(p.x / WIDTH, 0.25, 0.75),
-        y: clamp(p.y / HEIGHT, 0.25, 0.75),
+        x: clamp(p.x / WIDTH, 0.12, 0.88),
+        y: clamp(p.y / HEIGHT, 0.12, 0.88),
       };
+      this.plan = createPatternPlan(this.random, this.route);
       this.wave = 0;
       this.spawnIn = 0;
       this.onEvent("stage");
