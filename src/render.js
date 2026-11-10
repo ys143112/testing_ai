@@ -1,9 +1,10 @@
-import { WIDTH, HEIGHT } from "./patterns.js";
+import { WIDTH, HEIGHT, PATTERNS } from "./patterns.js";
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.tint = [137, 249, 196];
     this.resize();
   }
   resize() {
@@ -55,8 +56,15 @@ export class Renderer {
     for (let x = 40; x < WIDTH; x += 80)
       for (let y = 40; y < HEIGHT; y += 80) c.fillRect(x - 1, y - 1, 2, 2);
     const glow = c.createRadialGradient(300, 320, 0, 300, 320, 360);
-    glow.addColorStop(0, "#66dda908");
-    glow.addColorStop(1, "#66dda900");
+    const target =
+      PATTERNS[(game.pattern + (game.preview ? 1 : 0)) % PATTERNS.length].color;
+    this.tint = this.tint.map(
+      (value, i) =>
+        value +
+        (parseInt(target.slice(1 + i * 2, 3 + i * 2), 16) - value) * 0.045,
+    );
+    glow.addColorStop(0, `rgba(${this.tint.join(",")},.065)`);
+    glow.addColorStop(1, `rgba(${this.tint.join(",")},0)`);
     c.fillStyle = glow;
     c.fillRect(0, 0, WIDTH, HEIGHT);
     for (const h of game.hazards) {

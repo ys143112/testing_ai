@@ -789,3 +789,35 @@ kbd {
     transform: none;
   }
 }
+
+.handoff {
+  position: absolute;
+  bottom: 43px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90%;
+  width: max-content;
+  padding: 9px 15px;
+  border: 1px solid color-mix(in srgb, var(--next-color) 35%, transparent);
+  border-radius: 20px;
+  background: #0a121ee6;
+  color: var(--next-color);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  pointer-events: none;
+  box-shadow: 0 4px 18px #0003;
+}
+.pattern-list li.up-next {
+  opacity: 0.85;
+}
+.pattern-list li.up-next .pattern-symbol {
+  border-style: dashed;
+  border-color: #7d8fa0;
+}
+@media (max-width: 450px) {
+  .handoff {
+    font-size: 8px;
+    padding: 8px 11px;
+    bottom: 39px;
+  }
+}

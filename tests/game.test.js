@@ -129,80 +129,132 @@ test("pause / resume exclude hidden time; restart removes all previous run state
   assert.equal(g.nearMisses, 0);
   assert.equal(g.spawnIn, 2);
 });
-test("five-second patterns finish without deleting or overlapping previous waves", () => {
+test("five full seconds of attacks finish naturally, preview and then connect without overlap", () => {
   for (let seed = 1; seed <= 12; seed++) {
     let g,
-      transitions = 0,
-      sawHazards = false;
+      stages = 0,
+      previews = 0,
+      stageStart = 2,
+      previousPattern = 0,
+      lastWave = 0;
     g = new Game({
       random: rng(seed),
       onEvent: (e) => {
+        if (e === "handoff") {
+          assert(g.preview, "next pattern must be announced before cleanup");
+          previews++;
+          assert(g.stageTime >= 5 - 1e-7);
+          assert(
+            g.wave >= [7, 4, 6, 4][g.pattern],
+            `pattern ${g.pattern} must launch enough waves: ${g.wave}`,
+          );
+          lastWave = g.wave;
+        }
         if (e === "stage") {
           assert.equal(g.hazards.length, 0);
-          assert(
-            Math.abs(
-              g.time - transitions * PATTERN_DURATION - PATTERN_DURATION,
-            ) < 0.02,
-          );
-          transitions++;
+          assert(g.time - stageStart >= 5);
+          assert(g.time - stageStart < 9);
+          assert.equal(previews, stages + 1);
+          assert(lastWave > 0);
+          assert.equal(g.pattern, (previousPattern + 1) % 4);
+          previousPattern = g.pattern;
+          stageStart = g.time;
+          stages++;
         }
       },
     });
     g.start();
     g.end = () => {};
-    for (let i = 0; i < 120 * 60; i++) {
-      const previous = [...g.hazards],
-        ages = previous.map((h) => h.age);
+    for (let i = 0; i < 120 * 120; i++) {
+      const previous = [...g.hazards];
       g.update(1 / 120);
-      sawHazards ||= g.hazards.length > 0;
-      previous.forEach((h, j) => {
+      previous.forEach((h) => {
         if (!g.hazards.includes(h)) {
           assert(
             h.age >= h.life,
-            "a live hazard must not be erased on transition",
+            "a live attack must not disappear at a boundary",
           );
-          assert(h.age > ages[j]);
           if (h.kind !== "laser")
             assert(
               h.x + (h.r || h.w) < 0 ||
                 h.x - (h.r || 0) > 600 ||
                 h.y + (h.r || h.h) < 0 ||
                 h.y - (h.r || 0) > 640,
-              "moving hazard must leave the field naturally",
+              "moving hazard must leave naturally",
             );
         }
       });
     }
-    assert(sawHazards);
-    assert.equal(transitions, 12);
+    assert(stages >= 12);
   }
 });
-test("late waves are not launched and an uncleared hazard blocks a transition", () => {
+test("late waves still launch, drain stops launches, pause and restart reset handoff", () => {
   const g = new Game();
   g.start();
+  g.stageTime = 3.8;
+  g.update(1 / 120);
+  assert(g.preview);
+  assert(!g.handoff);
   g.stageTime = 4.9;
+  assert(Number.isFinite(spawnWave(g)));
+  assert(g.hazards.length > 0);
+  g.stageTime = 5;
+  const count = g.hazards.length;
   assert.equal(spawnWave(g), Infinity);
-  assert.equal(g.hazards.length, 0);
-  const h = {
-    kind: "circle",
-    x: 20,
-    y: 20,
-    r: 8,
-    vx: 100,
-    vy: 0,
-    age: 0,
-    warning: 0,
-    life: 1,
-  };
-  g.hazards = [h];
-  g.spawnIn = Infinity;
-  g.update(0.1);
-  assert.equal(g.stage, 0);
-  assert(g.hazards.includes(h));
-  advance(g, 0.5);
+  assert.equal(g.hazards.length, count);
   g.update(0.02);
+  assert(g.handoff);
+  assert.equal(g.stage, 0);
+  g.pause();
+  const age = g.hazards[0].age;
+  advance(g, 2);
+  assert.equal(g.hazards[0].age, age);
+  g.start();
+  assert(!g.handoff);
+  assert.equal(g.stageTime, -2);
+});
+test("next opening inherits exit lane and previous pattern fully finishes", () => {
+  const g = new Game();
+  g.start();
+  g.stageTime = 5;
+  g.handoff = true;
+  g.hazards = [];
+  g.player.x = 390;
+  g.player.y = 320;
+  g.update(1 / 120);
   assert.equal(g.stage, 1);
-  assert.equal(g.pattern, 1);
+  assert(Math.abs(g.route.x - 0.65) < 1e-8);
+  assert.equal(g.stageTime, 0);
+  assert.equal(g.hazards.length, 0);
+  g.update(1 / 120);
+  const [a, b] = g.hazards;
+  assert(Math.abs((a.w + b.x) / 2 - 390) < 1);
+  assert(g.hazards.every((h) => h.age < h.warning));
+});
+test("choreography changes rain direction, connects gates and alternates pulse/fan attacks", () => {
+  function wave(pattern, n) {
+    const g = new Game({ random: rng(3) });
+    g.start();
+    g.stageTime = 0;
+    g.pattern = pattern;
+    g.wave = n;
+    g.time = 20;
+    g.stage = pattern;
+    spawnWave(g);
+    return g.hazards;
+  }
+  assert(wave(0, 0)[0].vx * wave(0, 2)[0].vx < 0);
+  const first = wave(1, 0),
+    second = wave(1, 1);
+  assert(first.every((h) => h.vy > 0) && second.every((h) => h.vy > 0));
+  assert(
+    Math.abs((first[1].x + first[0].w) / 2 - (second[1].x + second[0].w) / 2) <
+      50,
+  );
+  assert(wave(2, 0)[0].h > wave(2, 0)[0].w);
+  assert(wave(2, 1)[0].w > wave(2, 1)[0].h);
+  assert(wave(3, 0).every((h) => h.x === 0));
+  assert(wave(3, 1).every((h) => h.x === 600));
 });
 test("obstacle motion and lifecycle use double tempo while player and score stay real-time", () => {
   const g = new Game();
@@ -243,7 +295,7 @@ test("patterns leave gaps, telegraph danger and difficulty converges", () => {
       assert(g.hazards.every((h) => h.warning >= 0.5));
       if (phase === 1) {
         const [a, b] = g.hazards;
-        const gap = wave % 2 === 0 ? b.x - (a.x + a.w) : b.y - (a.y + a.h);
+        const gap = a.vy ? b.x - (a.x + a.w) : b.y - (a.y + a.h);
         assert(gap >= 150);
       }
       if (phase === 2) assert.equal(g.hazards.length, 2);

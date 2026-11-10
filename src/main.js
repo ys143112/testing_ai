@@ -35,8 +35,13 @@ const game = new Game({
       audio.play(event);
       return;
     }
+    if (event === "preview" || event === "handoff") {
+      $("status").textContent =
+        `다음 패턴 ${PATTERNS[(game.pattern + 1) % 4].name}. 남은 장애물을 피하세요.`;
+      return;
+    }
     if (event === "stage") {
-      announcementUntil = game.time + 2;
+      announcementUntil = game.time + 1.1;
       $("announcement").textContent =
         `STAGE ${String(game.stage + 1).padStart(2, "0")} · ${PATTERNS[game.pattern].name}`;
       $("status").textContent =
@@ -241,21 +246,27 @@ function frame(timestamp) {
   $("time").innerHTML = `${formatTime(game.time)}<small>s</small>`;
   $("best").innerHTML = `${formatTime(best)}<small>s</small>`;
   $("stage").textContent = `STAGE ${String(game.stage + 1).padStart(2, "0")}`;
-  $("pattern").textContent = PATTERNS[game.pattern].name;
+  const next = PATTERNS[(game.pattern + 1) % PATTERNS.length];
+  $("pattern").textContent = game.handoff
+    ? `${PATTERNS[game.pattern].name} · 마무리`
+    : PATTERNS[game.pattern].name;
+  $("handoff").hidden = !game.preview || game.state !== "playing";
+  $("handoff").textContent = `NEXT / ${next.name} · ${next.hint}`;
+  $("arena").style.setProperty("--next-color", next.color);
   $("progress").style.width =
-    `${Math.min(1, game.stageTime / PATTERN_DURATION) * 100}%`;
+    `${Math.max(0, Math.min(1, game.stageTime / PATTERN_DURATION)) * 100}%`;
   $("announcement").classList.toggle(
     "visible",
     game.state === "playing" && game.time < announcementUntil,
   );
-  document
-    .querySelectorAll("[data-pattern]")
-    .forEach((el) =>
-      el.classList.toggle(
-        "active",
-        Number(el.dataset.pattern) === game.pattern,
-      ),
+  document.querySelectorAll("[data-pattern]").forEach((el) => {
+    el.classList.toggle("active", Number(el.dataset.pattern) === game.pattern);
+    el.classList.toggle(
+      "up-next",
+      game.handoff &&
+        Number(el.dataset.pattern) === (game.pattern + 1) % PATTERNS.length,
     );
+  });
   requestAnimationFrame(frame);
 }
 updateSound();

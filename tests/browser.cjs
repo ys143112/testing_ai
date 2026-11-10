@@ -204,7 +204,7 @@ async function waitServer() {
   await mp.clock.runFor(50);
   await mp.locator("#overlay").waitFor({ state: "visible" });
   assert(await mp.locator("#overlay").isVisible());
-  // Deterministic center opening lets the real app reach its first transition.
+  // Follow the center opening and exercise the real attack -> drain -> next UI.
   const paced = await browser.newPage();
   paced.on("pageerror", (e) => errors.push(e.message));
   await paced.addInitScript(() => {
@@ -213,11 +213,22 @@ async function waitServer() {
   await paced.clock.install();
   await paced.goto(url);
   await paced.getByRole("button", { name: "살아남기" }).click();
-  await paced.clock.runFor(4800);
+  // Deterministic rain keeps a clear center route for this UI transition test.
+  await paced.clock.runFor(6800);
   assert.equal(await paced.locator("#stage").textContent(), "STAGE 01");
   await paced.clock.runFor(300);
+  assert(await paced.locator("#handoff").isVisible());
+  assert((await paced.locator("#handoff").textContent()).includes("틈새 비행"));
+  assert((await paced.locator("#pattern").textContent()).includes("마무리"));
+  await paced.screenshot({ path: "test-results/transition.png" });
+  for (
+    let i = 0;
+    i < 40 && (await paced.locator("#stage").textContent()) === "STAGE 01";
+    i++
+  )
+    await paced.clock.runFor(100);
   assert.equal(await paced.locator("#stage").textContent(), "STAGE 02");
-  assert.equal(await paced.locator("#pattern").textContent(), "틈새 비행");
+  assert(await paced.locator("#handoff").isHidden());
   assert(await paced.locator("#overlay").isHidden());
   await paced.close();
   // Verify project subdirectory paths using a parent-root static server.
@@ -246,7 +257,7 @@ async function waitServer() {
   }
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: browser start, keyboard, pause/resume, blur, hidden tab, resize, real collision, restart, best reload, sound, blocked storage, mobile touch, five-second transition, DPR and subdirectory.",
+    "PASS: browser start, keyboard, pause/resume, blur, hidden tab, resize, real collision, restart, best reload, sound, blocked storage, mobile touch, full attacks and seamless handoff, DPR and subdirectory.",
   );
 })()
   .catch((e) => {

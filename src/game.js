@@ -17,7 +17,10 @@ export class Game {
   reset() {
     this.time = 0;
     this.stage = 0;
-    this.stageTime = 0;
+    this.stageTime = -2;
+    this.handoff = false;
+    this.preview = false;
+    this.route = { x: 0.5, y: 0.64 };
     this.pattern = 0;
     this.wave = 0;
     this.spawnIn = 2;
@@ -91,19 +94,13 @@ export class Game {
     if (this.state !== "playing") return;
     this.time += dt;
     this.stageTime += dt;
-    // Never cut off a live wave. Normal waves are budgeted to clear before 5s;
-    // this guard also handles delayed cleanup without overlapping patterns.
-    if (
-      this.stageTime + 1e-8 >= PATTERN_DURATION &&
-      this.hazards.length === 0
-    ) {
-      this.stage++;
-      this.stageTime = 0;
-      this.pattern = this.stage % 4;
-      this.spawnIn = 0;
-      this.wave = 0;
-      this.burst(this.player.x, this.player.y, "#89f9c4", 12);
-      this.onEvent("stage");
+    if (this.stageTime >= PATTERN_DURATION - 1.25 && !this.preview) {
+      this.preview = true;
+      this.onEvent("preview");
+    }
+    if (this.stageTime + 1e-8 >= PATTERN_DURATION && !this.handoff) {
+      this.handoff = true;
+      this.onEvent("handoff");
     }
     const p = this.player;
     let dx = Number.isFinite(input.x) ? input.x : 0,
@@ -153,5 +150,21 @@ export class Game {
       }
     }
     this.hazards = this.hazards.filter((h) => h.age < h.life);
+    if (this.state === "playing" && this.handoff && this.hazards.length === 0) {
+      this.stage++;
+      this.stageTime = 0;
+      this.handoff = false;
+      this.preview = false;
+      this.pattern = this.stage % 4;
+      // Carry the player's exit lane into the next pattern's opening. Inputs
+      // and trail persist so the movement never feels interrupted.
+      this.route = {
+        x: clamp(p.x / WIDTH, 0.25, 0.75),
+        y: clamp(p.y / HEIGHT, 0.25, 0.75),
+      };
+      this.wave = 0;
+      this.spawnIn = 0;
+      this.onEvent("stage");
+    }
   }
 }

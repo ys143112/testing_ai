@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#090e19" />
     <meta
       name="description"
-      content="5초마다 바뀌는 위험 속에서 살아남으세요. PC와 모바일로 즐기는 네온 아케이드 생존 게임."
+      content="5초간 몰아치는 패턴을 넘어서 살아남으세요. PC와 모바일로 즐기는 네온 아케이드 생존 게임."
     />
     <title>10초만 살아남아라 · TEN / SECONDS</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
@@ -47,7 +47,7 @@
             <span class="status-dot"></span> JUST ONE MORE TRY
           </p>
           <h1>10초만 <span>살아남아라</span><b>.</b></h1>
-          <p class="subtitle">다음 5초는, 조금 다를 거예요.</p>
+          <p class="subtitle">피하고, 흐름을 타고, 다음 패턴으로.</p>
         </div>
         <div class="personal-best">
           <span>이 브라우저 최고 기록</span
@@ -88,7 +88,8 @@
                   작은 점 하나.<br />당신의 모든 집중력.
                 </h2>
                 <p id="overlay-description">
-                  붉은 위험을 피하세요.<br />5초마다 새로운 패턴이 시작됩니다.
+                  붉은 위험을 피하세요.<br />5초간 몰아치는 공격, 그리고 다음
+                  패턴.
                 </p>
                 <div class="result" id="result" hidden></div>
                 <button class="primary" id="action">
@@ -104,6 +105,7 @@
               class="announcement"
               aria-live="polite"
             ></div>
+            <div id="handoff" class="handoff" hidden></div>
             <div class="arena-label" aria-hidden="true">
               <span>FIELD / 001</span><span>STAY IN MOTION</span>
             </div>
@@ -140,13 +142,14 @@
             </div>
           </section>
           <section class="patterns-card">
-            <p class="eyebrow">EVERY 5 SECONDS</p>
-            <h2>익숙해질 때쯤,<br />다음 패턴.</h2>
+            <p class="eyebrow">5 SECONDS OF ACTION</p>
+            <h2>흐름이 이어지는,<br />다음 패턴.</h2>
             <ol class="pattern-list">
               <li data-pattern="0" class="active">
                 <span class="pattern-symbol">╲</span>
                 <div>
-                  <strong>유성우</strong><small>흐름 사이를 가로지르세요</small>
+                  <strong>유성우</strong
+                  ><small>번갈아 기우는 빗줄기를 피하세요</small>
                 </div>
                 <span>01</span>
               </li>
@@ -154,7 +157,7 @@
                 <span class="pattern-symbol">▥</span>
                 <div>
                   <strong>틈새 비행</strong
-                  ><small>열린 통로를 찾아 이동하세요</small>
+                  ><small>이어지는 통로의 흐름을 타세요</small>
                 </div>
                 <span>02</span>
               </li>
@@ -162,7 +165,7 @@
                 <span class="pattern-symbol">＋</span>
                 <div>
                   <strong>경계선</strong
-                  ><small>점선이 빛나기 전에 벗어나세요</small>
+                  ><small>세로와 가로 연속 공격을 피하세요</small>
                 </div>
                 <span>03</span>
               </li>
@@ -170,7 +173,7 @@
                 <span class="pattern-symbol">✳</span>
                 <div>
                   <strong>파동</strong
-                  ><small>퍼지는 탄 사이로 빠져나가세요</small>
+                  ><small>양쪽에서 퍼지는 파동을 넘으세요</small>
                 </div>
                 <span>04</span>
               </li>
