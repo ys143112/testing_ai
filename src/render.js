@@ -55,7 +55,14 @@ export class Renderer {
     c.fillStyle = "#56718444";
     for (let x = 40; x < WIDTH; x += 80)
       for (let y = 40; y < HEIGHT; y += 80) c.fillRect(x - 1, y - 1, 2, 2);
-    const glow = c.createRadialGradient(300, 320, 0, 300, 320, 360);
+    const glow = c.createRadialGradient(
+      WIDTH / 2,
+      HEIGHT / 2,
+      0,
+      WIDTH / 2,
+      HEIGHT / 2,
+      WIDTH * 0.6,
+    );
     const target =
       PATTERNS[(game.pattern + (game.preview ? 1 : 0)) % PATTERNS.length].color;
     this.tint = this.tint.map(

@@ -36,9 +36,22 @@ async function waitServer() {
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
   });
+  async function squareCanvas(page) {
+    const size = await page
+      .locator("canvas")
+      .evaluate((c) => ({
+        w: c.getBoundingClientRect().width,
+        h: c.getBoundingClientRect().height,
+        bw: c.width,
+        bh: c.height,
+      }));
+    assert(Math.abs(size.w - size.h) < 1, "display must be square");
+    assert.equal(size.bw, size.bh);
+  }
   await page.clock.install();
   await page.goto(url);
   await page.getByRole("button", { name: "살아남기" }).waitFor();
+  await squareCanvas(page);
   await page.screenshot({
     path: "test-results/desktop-start.png",
     fullPage: true,
@@ -159,6 +172,7 @@ async function waitServer() {
       }
       return { x: x / n, y: y / n };
     });
+  await squareCanvas(mp);
   const before = await playerCenter();
   const rect = await mp.locator("canvas").boundingBox(),
     session = await mobile.newCDPSession(mp);
@@ -230,6 +244,16 @@ async function waitServer() {
   assert.equal(await paced.locator("#stage").textContent(), "STAGE 02");
   assert(await paced.locator("#handoff").isHidden());
   assert(await paced.locator("#overlay").isHidden());
+  await paced.setViewportSize({ width: 320, height: 568 });
+  await paced.clock.runFor(50);
+  await squareCanvas(paced);
+  const actionBox = await paced.locator("#action").boundingBox(),
+    arenaBox = await paced.locator("#arena").boundingBox();
+  assert(
+    actionBox.y >= arenaBox.y &&
+      actionBox.y + actionBox.height <= arenaBox.y + arenaBox.height,
+    "small-screen resume button must fit inside square field",
+  );
   await paced.close();
   // Verify project subdirectory paths using a parent-root static server.
   const siteRoot = path.resolve(process.env.SERVE_DIR || ".");

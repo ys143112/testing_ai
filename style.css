@@ -43,7 +43,7 @@ button:disabled {
   opacity: 0.35;
 }
 .shell {
-  max-width: 1152px;
+  max-width: 1040px;
   margin: 0 auto;
   padding: 0 40px;
 }
@@ -219,7 +219,7 @@ h1 b {
 }
 .arena {
   position: relative;
-  aspect-ratio: 15/16;
+  aspect-ratio: 1;
   isolation: isolate;
   touch-action: none;
   user-select: none;
@@ -583,13 +583,6 @@ kbd {
 [hidden] {
   display: none !important;
 }
-@media (min-width: 1000px) {
-  .arena {
-    max-height: 610px;
-    aspect-ratio: auto;
-    height: min(53vw, 610px);
-  }
-}
 @media (max-width: 800px) {
   .shell {
     padding: 0 22px;
@@ -627,11 +620,6 @@ kbd {
   }
   .personal-best > span {
     font-size: 9px;
-  }
-  .arena {
-    max-height: 65dvh;
-    aspect-ratio: auto;
-    height: 620px;
   }
   .guide-note {
     line-height: 1.9;
@@ -717,10 +705,6 @@ kbd {
   }
   .phase-info strong {
     font-size: 12px;
-  }
-  .arena {
-    height: 480px;
-    max-height: 58dvh;
   }
   .arena-footer {
     font-size: 7px;
@@ -819,5 +803,20 @@ kbd {
     font-size: 8px;
     padding: 8px 11px;
     bottom: 39px;
+  }
+}
+
+@media (max-width: 360px) {
+  .overlay .orbit-mark {
+    display: none;
+  }
+  .overlay h2 {
+    font-size: 21px;
+  }
+  .overlay .primary {
+    min-height: 44px;
+  }
+  .overlay p.overlay-hint {
+    margin-top: 10px;
   }
 }
