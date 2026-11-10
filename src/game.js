@@ -6,6 +6,7 @@ import {
   PATTERN_TEMPO,
   spawnWave,
   createPatternPlan,
+  createPatternOrder,
 } from "./patterns.js";
 export const PLAYER_SPEED = 250;
 export class Game {
@@ -17,6 +18,7 @@ export class Game {
   }
   reset() {
     this.time = 0;
+    this.survivalTime = 0;
     this.stage = 0;
     this.stageTime = -2;
     this.handoff = false;
@@ -24,6 +26,8 @@ export class Game {
     this.route = { x: 0.5, y: 0.64 };
     this.plan = createPatternPlan(this.random, this.route);
     this.pattern = 0;
+    this.patternQueue = createPatternOrder(this.random, null, true);
+    this.patternQueue.shift();
     this.wave = 0;
     this.spawnIn = 2;
     this.hazards = [];
@@ -32,6 +36,9 @@ export class Game {
     this.player = { x: WIDTH / 2, y: HEIGHT * 0.64, r: 7 };
     this.trail = [];
     this.flash = 0;
+  }
+  get nextPattern() {
+    return this.patternQueue[0];
   }
   start() {
     this.reset();
@@ -74,14 +81,17 @@ export class Game {
     if (this.particles.length > 120)
       this.particles.splice(0, this.particles.length - 120);
   }
-  update(dt, input = { x: 0, y: 0 }) {
+  update(dt, input = { x: 0, y: 0 }, speed = 1) {
     if (!Number.isFinite(dt) || dt <= 0) return;
-    // Bound each physics step to prevent tunneling even for slow frames.
+    const rate = clamp(Math.round(Number(speed) || 1), 1, 8);
     let remaining = Math.min(dt, 0.1);
+    // Speed up the simulation, not the score. Substeps stay <=1/120 simulated
+    // seconds, including at 8x, to keep collision and warning boundaries stable.
     while (remaining > 1e-8) {
-      const step = Math.min(remaining, 1 / 120);
-      this.step(step, input);
-      remaining -= step;
+      const realStep = Math.min(remaining, 1 / 120 / rate);
+      if (this.state === "playing") this.survivalTime += realStep;
+      this.step(realStep * rate, input);
+      remaining -= realStep;
     }
   }
   step(dt, input) {
@@ -135,8 +145,42 @@ export class Game {
     for (const h of this.hazards) {
       h.age += dt * PATTERN_TEMPO;
       if (h.age < h.warning) continue;
-      h.x += h.vx * dt * PATTERN_TEMPO;
-      h.y += h.vy * dt * PATTERN_TEMPO;
+      if (h.orbit) {
+        const o = h.orbit;
+        o.angle += o.angular * dt * PATTERN_TEMPO;
+        h.x = o.cx + Math.cos(o.angle) * o.radius;
+        h.y = o.cy + Math.sin(o.angle) * o.radius;
+        h.vx = -Math.sin(o.angle) * o.radius * o.angular;
+        h.vy = Math.cos(o.angle) * o.radius * o.angular;
+      } else {
+        h.x += h.vx * dt * PATTERN_TEMPO;
+        h.y += h.vy * dt * PATTERN_TEMPO;
+        if (h.bounce) {
+          const b = h.bounce;
+          if (
+            h.x >= h.r &&
+            h.x <= WIDTH - h.r &&
+            h.y >= h.r &&
+            h.y <= HEIGHT - h.r
+          )
+            b.entered = true;
+          if (b.entered && b.remaining > 0) {
+            for (const axis of ["x", "y"]) {
+              const max = (axis === "x" ? WIDTH : HEIGHT) - h.r,
+                key = axis === "x" ? "vx" : "vy";
+              if (h[axis] < h.r) {
+                h[axis] = 2 * h.r - h[axis];
+                h[key] = Math.abs(h[key]);
+                b.remaining--;
+              } else if (h[axis] > max) {
+                h[axis] = 2 * max - h[axis];
+                h[key] = -Math.abs(h[key]);
+                b.remaining--;
+              }
+            }
+          }
+        }
+      }
     }
     for (const h of this.hazards) {
       if (h.age < h.warning || h.age >= h.life) continue;
@@ -157,7 +201,9 @@ export class Game {
       this.stageTime = 0;
       this.handoff = false;
       this.preview = false;
-      this.pattern = this.stage % 4;
+      this.pattern = this.patternQueue.shift();
+      if (!this.patternQueue.length)
+        this.patternQueue = createPatternOrder(this.random, this.pattern);
       // Carry the player's exit lane into the next pattern's opening. Inputs
       // and trail persist so the movement never feels interrupted.
       this.route = {

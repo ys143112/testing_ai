@@ -197,6 +197,59 @@ async function waitServer() {
     window.__beamPreview.canvas.remove();
     delete window.__beamPreview;
   });
+  // Render every new family in both telegraph and active states.
+  await page.evaluate(async () => {
+    const entry = document.querySelector("script[type=module]").src,
+      { Game } = await import(new URL("game.js", entry).href),
+      { Renderer } = await import(new URL("render.js", entry).href),
+      p = await import(new URL("patterns.js", entry).href);
+    const canvas = document.createElement("canvas");
+    canvas.style.cssText =
+      "width:300px;height:300px;position:fixed;left:0;top:0";
+    document.body.append(canvas);
+    const renderer = new Renderer(canvas);
+    for (let pattern = 4; pattern < 8; pattern++) {
+      const g = new Game({ random: () => 0.5 });
+      g.start();
+      g.pattern = pattern;
+      g.stageTime = 0;
+      g.spawnIn = Infinity;
+      p.spawnWave(g);
+      renderer.draw(g, 0);
+      g.end = () => {};
+      for (let i = 0; i < 20; i++) g.update(0.1);
+      renderer.draw(g, 2);
+    }
+    canvas.remove();
+  });
+  assert.equal(await page.locator("[data-pattern]").count(), 8);
+  const fast = await browser.newPage();
+  await fast.clock.install();
+  await fast.goto(url);
+  await fast.getByRole("combobox", { name: "게임 배속" }).selectOption("8");
+  await fast.getByRole("button", { name: "살아남기" }).click();
+  await fast.clock.runFor(100);
+  assert.equal(await fast.locator("#speed").isDisabled(), true);
+  assert(Number.parseFloat(await fast.locator("#time").textContent()) < 0.8);
+  await fast.keyboard.press("p");
+  const fastTime = await fast.locator("#time").textContent();
+  await fast.clock.runFor(1000);
+  assert.equal(await fast.locator("#time").textContent(), fastTime);
+  await fast.getByRole("button", { name: "계속 살아남기" }).click();
+  for (let i = 0; i < 10 && (await fast.locator("#overlay").isHidden()); i++)
+    await fast.clock.runFor(500);
+  assert(await fast.locator("#result").isVisible());
+  assert(
+    await fast.evaluate(
+      () =>
+        Number(localStorage.getItem("ten-seconds.best.v1.x8")) > 0 &&
+        !localStorage.getItem("ten-seconds.best.v1"),
+    ),
+  );
+  await fast.getByRole("combobox", { name: "게임 배속" }).selectOption("1");
+  await fast.reload();
+  assert.equal(await fast.locator("#speed").inputValue(), "1");
+  await fast.close();
   // Denied storage must still boot and start.
   const denied = await browser.newPage();
   await denied.addInitScript(() => {
@@ -289,7 +342,9 @@ async function waitServer() {
   await mp.clock.runFor(50);
   await mp.locator("#overlay").waitFor({ state: "visible" });
   assert(await mp.locator("#overlay").isVisible());
-  // Follow the center opening and exercise the real attack -> drain -> next UI.
+  // An idle player now dies, so reach the handoff using an actual legal route.
+  const { planFirstStage } = await import("./autoplay.js");
+  const route = planFirstStage();
   const paced = await browser.newPage();
   paced.on("pageerror", (e) => errors.push(e.message));
   await paced.addInitScript(() => {
@@ -297,26 +352,50 @@ async function waitServer() {
   });
   await paced.clock.install();
   await paced.goto(url);
-  await paced.getByRole("button", { name: "살아남기" }).click();
-  // Deterministic rain keeps a clear center route for this UI transition test.
-  await paced.clock.runFor(6800);
-  assert.equal(await paced.locator("#stage").textContent(), "STAGE 01");
-  await paced.clock.runFor(300);
-  assert(await paced.locator("#handoff").isVisible());
-  assert((await paced.locator("#handoff").textContent()).includes("틈새 비행"));
-  assert((await paced.locator("#pattern").textContent()).includes("마무리"));
-  await paced.screenshot({ path: "test-results/transition.png" });
-  for (
-    let i = 0;
-    i < 40 && (await paced.locator("#stage").textContent()) === "STAGE 01";
-    i++
-  )
+  await paced.clock.pauseAt(await paced.evaluate(() => Date.now() + 1000));
+  await paced.locator("#action").dispatchEvent("click");
+  let sawHandoff = false,
+    expectedName = "";
+  for (const step of route) {
+    await paced.evaluate((input) => {
+      const desired = new Set();
+      if (input.x < 0) desired.add("ArrowLeft");
+      if (input.x > 0) desired.add("ArrowRight");
+      if (input.y < 0) desired.add("ArrowUp");
+      if (input.y > 0) desired.add("ArrowDown");
+      for (const key of ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"])
+        window.dispatchEvent(
+          new KeyboardEvent(desired.has(key) ? "keydown" : "keyup", {
+            key,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+    }, step.input);
     await paced.clock.runFor(100);
+    if (!sawHandoff && step.time > 7.1) {
+      sawHandoff = await paced.locator("#handoff").isVisible();
+      if (sawHandoff) {
+        expectedName = (await paced.locator("#handoff").textContent())
+          .split(" · ")[0]
+          .replace("NEXT / ", "");
+        await paced.screenshot({ path: "test-results/transition.png" });
+      }
+    }
+  }
+  await paced.evaluate(() => {
+    for (const key of ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"])
+      window.dispatchEvent(new KeyboardEvent("keyup", { key }));
+  });
+  await paced.clock.runFor(200);
+  assert(sawHandoff);
   assert.equal(await paced.locator("#stage").textContent(), "STAGE 02");
-  assert(await paced.locator("#handoff").isHidden());
+  assert.equal(await paced.locator("#pattern").textContent(), expectedName);
   assert(await paced.locator("#overlay").isHidden());
+  assert(await paced.locator("#handoff").isHidden());
   await paced.setViewportSize({ width: 320, height: 568 });
   await paced.clock.runFor(50);
+  await paced.locator("#overlay").waitFor({ state: "visible" });
   await squareCanvas(paced);
   const actionBox = await paced.locator("#action").boundingBox(),
     arenaBox = await paced.locator("#arena").boundingBox();

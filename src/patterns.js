@@ -6,6 +6,7 @@ import {
   entryPoint,
   safePolygon,
   closestPoint,
+  projectionSlice,
 } from "./geometry.js";
 import { clamp } from "./collision.js";
 export const WIDTH = 600,
@@ -17,19 +18,86 @@ export const PATTERNS = [
     name: "유성우",
     hint: "예고된 방향을 보고 흐름을 피하세요",
     color: "#ff718c",
+    family: "flow",
   },
   {
     name: "틈새 비행",
     hint: "방향이 바뀌어도 열린 공간을 이으세요",
     color: "#ffbc77",
+    family: "wall",
   },
-  { name: "경계선", hint: "점선에서 벗어나세요", color: "#c39cff" },
-  { name: "파동", hint: "퍼지는 탄 사이를 통과하세요", color: "#ff83ba" },
+  {
+    name: "경계선",
+    hint: "충전선이 모이기 전에 띠를 벗어나세요",
+    color: "#c39cff",
+    family: "beam",
+  },
+  {
+    name: "파동",
+    hint: "조준된 파동에서 옆으로 빠져나가세요",
+    color: "#ff83ba",
+    family: "flow",
+  },
+  {
+    name: "잔상",
+    hint: "발밑의 원이 채워지기 전에 벗어나세요",
+    color: "#ff865f",
+    family: "zone",
+  },
+  {
+    name: "궤도",
+    hint: "도는 탄의 안쪽이나 바깥쪽으로 이동하세요",
+    color: "#ffcd6e",
+    family: "orbit",
+  },
+  {
+    name: "압축 구역",
+    hint: "화살표 쪽으로 상자 밖을 탈출하세요",
+    color: "#e491ff",
+    family: "wall",
+  },
+  {
+    name: "반사탄",
+    hint: "벽에 튕긴 탄의 다음 경로를 보세요",
+    color: "#799dff",
+    family: "orbit",
+  },
 ];
+export function createPatternOrder(random, previous = null, first = false) {
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const ids = PATTERNS.map((_, i) => i);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    if (first) {
+      ids.splice(ids.indexOf(0), 1);
+      ids.unshift(0);
+    }
+    let last = previous,
+      valid = true;
+    for (const id of ids) {
+      if (last !== null && PATTERNS[last].family === PATTERNS[id].family) {
+        valid = false;
+        break;
+      }
+      last = id;
+    }
+    if (valid) return ids;
+  }
+  const fallback = [0, 1, 3, 4, 5, 2, 7, 6];
+  while (
+    previous !== null &&
+    PATTERNS[fallback[0]].family === PATTERNS[previous].family
+  )
+    fallback.push(fallback.shift());
+  return fallback;
+}
 export function difficulty(time) {
   return 1 + 1.35 * (1 - Math.exp((-time * PATTERN_TEMPO) / 100));
 }
-export const cycleLevel = (stage) => Math.min(3, Math.floor(stage / 4));
+export const cycleLevel = (stage) =>
+  Math.min(3, Math.floor(stage / PATTERNS.length));
 export const LASER_MIN_WARNING = 1.05;
 // Continuous small increments. Stage 5 no longer switches several rules on at once.
 export function stageTuning(stage) {
@@ -102,7 +170,9 @@ function addCrossfire(game, edge, count) {
   );
   const { x, y } = source(edge, across),
     aim = Math.atan2(p.y - y, p.x - x),
-    speed = 110 + 20 * difficulty(game.time);
+    speed =
+      ((110 + 20 * difficulty(game.time)) * support(DIRECTIONS[edge])) /
+      (WIDTH / 2);
   for (let i = 0; i < count; i++) {
     const angle = aim + (i - (count - 1) / 2) * 0.26;
     hazards.push({
@@ -171,6 +241,28 @@ function rain(game, tuning) {
       entry: edge,
     });
   }
+  // Replace one ordinary meteor instead of increasing density. Its fixed ray
+  // crosses the player's announced position, so parking in a lane is not enough.
+  const targetAcross = project(game.player, t),
+    start = entryPoint(edge, targetAcross);
+  let aimed = 0,
+    best = Infinity;
+  hazards.forEach((h, i) => {
+    const distance = Math.abs(project(h, t) - targetAcross);
+    if (distance < best) {
+      best = distance;
+      aimed = i;
+    }
+  });
+  hazards[aimed] = {
+    ...hazards[aimed],
+    ...start,
+    r: 10,
+    vx: n.x * speed,
+    vy: n.y * speed,
+    target: { x: game.player.x, y: game.player.y },
+    aimed: true,
+  };
   if ((game.wave + 1) % tuning.crossfireEvery === 0)
     addCrossfire(game, (edge + 2) % 8, tuning.crossfireCount);
   return Math.max(
@@ -212,6 +304,25 @@ function gates(game, tuning) {
         y: anchor.y + (dy / len) * step,
       };
     }
+  }
+  if (game.wave % 2 === 0) {
+    const candidates = [];
+    for (const sign of [-1, 1]) {
+      const value = project(p, t) + sign * (gap / 2 + 32);
+      const region =
+        sign > 0
+          ? projectionSlice(poly, t, value)
+          : projectionSlice(poly, t, -Infinity, value);
+      if (region.length) {
+        const point = closestPoint(p, region);
+        candidates.push({
+          point,
+          distance: Math.hypot(point.x - p.x, point.y - p.y),
+        });
+      }
+    }
+    if (candidates.length)
+      anchor = candidates.sort((a, b) => a.distance - b.distance)[0].point;
   }
   anchor = closestPoint(anchor, poly);
   plan.gateAnchor = anchor;
@@ -310,21 +421,24 @@ function fan(game, tuning) {
     clamp(across, -support(t) * 0.7, support(t) * 0.7),
     12,
   );
-  const direction = Math.atan2(HEIGHT / 2 - y, WIDTH / 2 - x),
+  const direction = Math.atan2(p.y - y, p.x - x),
     count = 7 + Math.floor(d),
-    speed = (105 + 30 * d) * (0.94 + r() * 0.12) * tuning.speedScale;
+    speed =
+      ((105 + 30 * d) * (0.94 + r() * 0.12) * tuning.speedScale * support(n)) /
+      (WIDTH / 2);
   const gapIndex = clamp(
       Math.floor(count / 2) + Math.floor(r() * 3) - 1,
       1,
       count - 2,
     ),
     spread = 0.2 + r() * 0.04;
+  const aimIndex =
+    gapIndex === Math.floor(count / 2)
+      ? Math.floor(count / 2) - 1
+      : Math.floor(count / 2);
   for (let i = 0; i < count; i++) {
     if (i === gapIndex) continue;
-    const angle =
-      direction +
-      (i - (count - 1) / 2) * spread +
-      Math.sin(plan.fanPhase + game.wave) * 0.04;
+    const angle = direction + (i - aimIndex) * spread;
     hazards.push({
       kind: "circle",
       x,
@@ -337,12 +451,132 @@ function fan(game, tuning) {
       life: 8,
       color: PATTERNS[3].color,
       entry: edge,
+      ...(i === aimIndex ? { target: { x: p.x, y: p.y }, aimed: true } : {}),
     });
   }
   return ((2.1 / Math.sqrt(d)) * (0.9 + r() * 0.2)) / tuning.cadence;
 }
+function marks(game) {
+  const { player: p, hazards, random: r } = game;
+  hazards.push({
+    kind: "zone",
+    x: p.x,
+    y: p.y,
+    r: 42 + r() * 14,
+    vx: 0,
+    vy: 0,
+    age: 0,
+    warning: 1.2 * PATTERN_TEMPO,
+    life: 2.25 * PATTERN_TEMPO,
+    color: PATTERNS[4].color,
+    boundedLifetime: true,
+    target: { x: p.x, y: p.y },
+  });
+  return 1.55 * PATTERN_TEMPO;
+}
+function orbits(game) {
+  const { player: p, hazards, random: r } = game;
+  let cx = clamp(p.x - 110, 90, 510),
+    cy = clamp(p.y - 45, 90, 510);
+  if (Math.hypot(p.x - cx, p.y - cy) < 70)
+    cx = clamp(p.x + (p.x < 300 ? 120 : -120), 60, 540);
+  const radius = Math.hypot(p.x - cx, p.y - cy),
+    phase = Math.atan2(p.y - cy, p.x - cx),
+    turn = r() < 0.5 ? -1 : 1;
+  for (let i = 0; i < 2; i++) {
+    const angle = phase + i * Math.PI,
+      angular = turn * (0.65 + r() * 0.12);
+    hazards.push({
+      kind: "circle",
+      x: cx + Math.cos(angle) * radius,
+      y: cy + Math.sin(angle) * radius,
+      r: 10,
+      vx: -Math.sin(angle) * radius * angular,
+      vy: Math.cos(angle) * radius * angular,
+      age: 0,
+      warning: 1.15 * PATTERN_TEMPO,
+      life: 4.55 * PATTERN_TEMPO,
+      color: PATTERNS[5].color,
+      orbit: { cx, cy, radius, angle, angular },
+      boundedLifetime: true,
+      cue: i === 0,
+    });
+  }
+  return 3.5 * PATTERN_TEMPO;
+}
+function crushers(game) {
+  const { player: p, hazards, random: r } = game,
+    rotation = r() < 0.5 ? 0 : Math.PI / 4,
+    size = 122 + r() * 20,
+    speed = 52 + r() * 12;
+  const axes = Array.from({ length: 4 }, (_, i) => ({
+    x: Math.cos(rotation + (i * Math.PI) / 2),
+    y: Math.sin(rotation + (i * Math.PI) / 2),
+  }));
+  let opening = 0,
+    best = -Infinity;
+  axes.forEach((n, i) => {
+    const score = n.x * (WIDTH / 2 - p.x) + n.y * (HEIGHT / 2 - p.y);
+    if (score > best) {
+      best = score;
+      opening = i;
+    }
+  });
+  for (let i = 0; i < 4; i++) {
+    if (i === opening) continue;
+    const n = axes[i],
+      t = tangent(n);
+    hazards.push({
+      kind: "crusher",
+      x: p.x + n.x * size,
+      y: p.y + n.y * size,
+      halfW: size,
+      halfH: 7,
+      angle: Math.atan2(t.y, t.x),
+      vx: -n.x * speed,
+      vy: -n.y * speed,
+      age: 0,
+      warning: 1.2 * PATTERN_TEMPO,
+      life: 1.2 * PATTERN_TEMPO + (size + 24) / speed,
+      color: PATTERNS[6].color,
+      boundedLifetime: true,
+      escape: {
+        x: p.x + axes[opening].x * 65,
+        y: p.y + axes[opening].y * 65,
+        n: axes[opening],
+      },
+      cue: hazards.length === 0,
+    });
+  }
+  return 3.4 * PATTERN_TEMPO;
+}
+function ricochets(game) {
+  const { player: p, hazards, plan, random: r } = game,
+    edge = nextEdge(plan, r),
+    t = tangent(DIRECTIONS[edge]),
+    start = entryPoint(edge, project(p, t)),
+    angle = Math.atan2(p.y - start.y, p.x - start.x),
+    speed = (130 + 15 * difficulty(game.time)) * (0.95 + r() * 0.1);
+  hazards.push({
+    kind: "circle",
+    ...start,
+    r: 11,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    age: 0,
+    warning: 0.9 * PATTERN_TEMPO,
+    life: 5.4 * PATTERN_TEMPO,
+    color: PATTERNS[7].color,
+    bounce: { remaining: 2, entered: false },
+    boundedLifetime: true,
+    target: { x: p.x, y: p.y },
+    aimed: true,
+    entry: edge,
+  });
+  return 1.7 * PATTERN_TEMPO;
+}
 export function clearanceTime(h) {
-  if (h.kind === "laser") return h.life;
+  if (h.kind === "laser" || h.boundedLifetime) return h.life;
   if (h.kind === "wall")
     return (
       h.warning +
@@ -367,7 +601,9 @@ export function spawnWave(game) {
     context = { ...game, liveHazards: game.hazards, hazards: pending },
     tuning = stageTuning(game.stage);
   const interval =
-    [rain, gates, lasers, fan][game.pattern](context, tuning) / PATTERN_TEMPO;
+    [rain, gates, lasers, fan, marks, orbits, crushers, ricochets][
+      game.pattern
+    ](context, tuning) / PATTERN_TEMPO;
   for (const h of pending) h.life = clearanceTime(h);
   game.hazards.push(...pending);
   return interval;

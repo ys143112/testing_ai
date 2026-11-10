@@ -17,10 +17,18 @@ import {
   LASER_MIN_WARNING,
   cycleLevel,
   stageTuning,
+  PATTERNS,
+  createPatternOrder,
   WIDTH,
   HEIGHT,
 } from "../src/patterns.js";
-import { readBest, saveBest, formatTime } from "../src/storage.js";
+import {
+  readBest,
+  saveBest,
+  formatTime,
+  readSpeed,
+  saveSpeed,
+} from "../src/storage.js";
 function rng(seed = 1) {
   return () => {
     seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -157,7 +165,7 @@ test("five full seconds of attacks finish naturally, preview and then connect wi
           previews++;
           assert(g.stageTime >= 5 - 1e-7);
           assert(
-            g.wave >= [7, 4, 3, 4][g.pattern],
+            g.wave >= [7, 4, 3, 4, 4, 2, 2, 3][g.pattern],
             `pattern ${g.pattern} must launch enough waves: ${g.wave}`,
           );
           lastWave = g.wave;
@@ -168,7 +176,10 @@ test("five full seconds of attacks finish naturally, preview and then connect wi
           assert(g.time - stageStart < 10);
           assert.equal(previews, stages + 1);
           assert(lastWave > 0);
-          assert.equal(g.pattern, (previousPattern + 1) % 4);
+          assert.notEqual(
+            PATTERNS[g.pattern].family,
+            PATTERNS[previousPattern].family,
+          );
           previousPattern = g.pattern;
           stageStart = g.time;
           stages++;
@@ -188,7 +199,7 @@ test("five full seconds of attacks finish naturally, preview and then connect wi
           );
           if (h.kind === "wall")
             assert(wallOutside(h), "oriented wall must fully exit");
-          else if (h.kind !== "laser")
+          else if (h.kind !== "laser" && !h.boundedLifetime)
             assert(
               h.x + (h.r || h.w) < 0 ||
                 h.x - (h.r || 0) > 600 ||
@@ -233,6 +244,7 @@ test("next opening inherits exit lane and previous pattern fully finishes", () =
   g.stageTime = 5;
   g.handoff = true;
   g.hazards = [];
+  g.patternQueue = [1, 2, 3, 4, 5, 6, 7, 0];
   g.player.x = 390;
   g.player.y = 320;
   g.update(1 / 120);
@@ -242,12 +254,18 @@ test("next opening inherits exit lane and previous pattern fully finishes", () =
   assert.equal(g.hazards.length, 0);
   g.update(1 / 120);
   const [a, b] = g.hazards;
+  const exit = closestPoint(g.player, safePolygon(g.hazards, 14));
   assert(
-    Math.abs((a.openLo + a.openHi) / 2 - project(g.player, a.gateTangent)) < 1,
+    Math.hypot(exit.x - g.player.x, exit.y - g.player.y) <=
+      PLAYER_SPEED * (a.warning / PATTERN_TEMPO - 0.35),
+  );
+  assert(
+    Math.abs((a.openLo + a.openHi) / 2 - project(g.player, a.gateTangent)) >=
+      (a.openHi - a.openLo) / 2 + 30,
   );
   assert(g.hazards.every((h) => h.age < h.warning));
 });
-test("seeded runs reproduce but fresh runs vary all four pattern families", () => {
+test("seeded runs reproduce but fresh runs vary all eight pattern families", () => {
   function trace(seed, pattern) {
     const g = new Game({ random: rng(seed) });
     g.start();
@@ -263,7 +281,7 @@ test("seeded runs reproduce but fresh runs vary all four pattern families", () =
     }
     return JSON.stringify(result);
   }
-  for (let p = 0; p < 4; p++) {
+  for (let p = 0; p < PATTERNS.length; p++) {
     assert.equal(trace(42, p), trace(42, p));
     const variants = new Set(
       Array.from({ length: 100 }, (_, i) => trace(i + 1, p)),
@@ -576,31 +594,233 @@ test("rotated rectangle collision follows visual edges, including corner misses"
     ),
   );
 });
-test("cycle progression survives 4 to 1, resets on retry, and never reduces laser warning", () => {
+test("eight-pattern bags shuffle without repeats or adjacent similar families", () => {
+  assert.equal(PATTERNS.length, 8);
+  const orders = new Set();
+  for (let seed = 1; seed <= 100; seed++) {
+    let previous = null;
+    const random = rng(seed);
+    for (let bag = 0; bag < 4; bag++) {
+      const order = createPatternOrder(random, previous, bag === 0);
+      assert.equal(new Set(order).size, 8);
+      if (bag === 0) assert.equal(order[0], 0);
+      for (const id of order) {
+        if (previous !== null)
+          assert.notEqual(PATTERNS[id].family, PATTERNS[previous].family);
+        previous = id;
+      }
+      orders.add(order.join(","));
+    }
+  }
+  assert(orders.size > 80);
   const g = new Game({ random: rng(5) });
   g.start();
-  g.stage = 3;
-  g.pattern = 3;
-  g.handoff = true;
-  g.stageTime = 6;
-  g.update(1 / 120);
-  assert.equal(g.stage, 4);
-  assert.equal(g.pattern, 0);
-  assert.equal(cycleLevel(g.stage), 1);
-  g.update(1 / 120);
-  assert(!g.hazards.some((h) => h.crossfire));
-  for (const stage of [2, 6, 10, 402]) {
-    g.stage = stage;
-    g.pattern = 2;
-    g.stageTime = 0;
+  const played = [g.pattern];
+  for (let stage = 0; stage < 23; stage++) {
+    const expected = g.nextPattern;
     g.hazards = [];
-    spawnWave(g);
-    assert.equal(g.hazards.length, 1);
-    assert(g.hazards[0].warning / PATTERN_TEMPO >= 0.9);
+    g.handoff = true;
+    g.stageTime = 6;
+    g.update(1 / 120);
+    assert.equal(g.pattern, expected);
+    played.push(g.pattern);
   }
+  for (let offset = 0; offset < 24; offset += 8)
+    assert.equal(new Set(played.slice(offset, offset + 8)).size, 8);
   g.start();
-  assert.equal(cycleLevel(g.stage), 0);
-  assert.equal(g.hazards.length, 0);
+  assert.equal(g.pattern, 0);
+  assert.equal(g.stage, 0);
+  assert.equal(g.patternQueue.length, 7);
+});
+test("stationary play cannot clear any pattern at center, edges or corners", () => {
+  const positions = [
+    { x: 300, y: 384 },
+    { x: 300, y: 300 },
+    { x: 12, y: 12 },
+    { x: 588, y: 588 },
+    { x: 12, y: 300 },
+    { x: 300, y: 588 },
+    { x: 588, y: 12 },
+  ];
+  for (let pattern = 0; pattern < PATTERNS.length; pattern++)
+    for (let seed = 1; seed <= 30; seed++)
+      for (const pos of positions) {
+        const g = new Game({ random: rng(seed) });
+        g.start();
+        g.pattern = pattern;
+        g.stage = pattern;
+        g.stageTime = 0;
+        g.spawnIn = 0;
+        g.time = 20;
+        Object.assign(g.player, pos);
+        for (
+          let f = 0;
+          f < 12 * 120 && g.state === "playing" && g.stage === pattern;
+          f++
+        )
+          g.update(1 / 120);
+        assert.equal(
+          g.state,
+          "over",
+          `idle clear: pattern ${pattern}, seed ${seed}, position ${JSON.stringify(pos)}`,
+        );
+      }
+});
+test("new marks, orbit and crusher patterns allow delayed, ordinary movement", () => {
+  for (const pattern of [4, 5, 6])
+    for (let seed = 1; seed <= 60; seed++) {
+      const g = new Game({ random: rng(seed) });
+      g.start();
+      g.pattern = pattern;
+      g.stage = pattern;
+      g.stageTime = 0;
+      g.spawnIn = 0;
+      g.time = 20;
+      let target = null,
+        reaction = 1;
+      const seen = new Set();
+      for (let f = 0; f < 120 * 12 && g.stage === pattern; f++) {
+        const fresh = g.hazards.find((h) => !seen.has(h));
+        if (fresh) {
+          g.hazards.forEach((h) => seen.add(h));
+          reaction = 0;
+          target = null;
+        }
+        reaction += 1 / 120;
+        if (reaction >= 0.35 && !target && g.hazards.length) {
+          const h = g.hazards[g.hazards.length - 1];
+          if (pattern === 4) {
+            const candidates = Array.from({ length: 8 }, (_, i) => ({
+              x: g.player.x + Math.cos((i * Math.PI) / 4) * (h.r + 25),
+              y: g.player.y + Math.sin((i * Math.PI) / 4) * (h.r + 25),
+            })).filter(
+              (p) => p.x >= 12 && p.x <= 588 && p.y >= 12 && p.y <= 588,
+            );
+            target =
+              candidates.find((p) =>
+                g.hazards.every(
+                  (z) => Math.hypot(p.x - z.x, p.y - z.y) > z.r + 12,
+                ),
+              ) || candidates[0];
+          }
+          if (pattern === 5) {
+            const o = h.orbit,
+              dx = g.player.x - o.cx,
+              dy = g.player.y - o.cy,
+              len = Math.hypot(dx, dy) || 1;
+            target = [1, -1]
+              .map((sign) => ({
+                x: g.player.x + (dx / len) * 60 * sign,
+                y: g.player.y + (dy / len) * 60 * sign,
+              }))
+              .find((p) => p.x >= 12 && p.x <= 588 && p.y >= 12 && p.y <= 588);
+          }
+          if (pattern === 6) {
+            const e = h.escape;
+            target = {
+              x: g.player.x + e.n.x * 170,
+              y: g.player.y + e.n.y * 170,
+            };
+          }
+        }
+        g.update(1 / 120, target ? { target } : undefined);
+        assert.equal(
+          g.state,
+          "playing",
+          `new pattern ${pattern} reaction route failed on seed ${seed}`,
+        );
+      }
+    }
+});
+test("ricochet motion reflects from the wall and all new effects have finite lifetimes", () => {
+  const g = new Game();
+  g.start();
+  g.spawnIn = Infinity;
+  const h = {
+    kind: "circle",
+    x: 587,
+    y: 300,
+    r: 11,
+    vx: 120,
+    vy: 0,
+    age: 1,
+    warning: 0,
+    life: 9,
+    bounce: { entered: true, remaining: 2 },
+  };
+  g.hazards = [h];
+  g.update(0.1);
+  assert(h.vx < 0);
+  assert.equal(h.bounce.remaining, 1);
+  assert(h.x < 589);
+  for (let pattern = 4; pattern < 8; pattern++) {
+    g.start();
+    g.pattern = pattern;
+    g.stageTime = 0;
+    spawnWave(g);
+    assert(
+      g.hazards.every(
+        (h) => Number.isFinite(h.life) && h.life / PATTERN_TEMPO < 6,
+      ),
+    );
+  }
+});
+test("1x to 8x accelerates physics but counts real survival seconds and pause excludes time", () => {
+  for (let speed = 1; speed <= 8; speed++) {
+    const g = new Game();
+    g.start();
+    g.spawnIn = Infinity;
+    const x = g.player.x;
+    g.update(0.1, { x: 1 }, speed);
+    assert(Math.abs(g.time - 0.1 * speed) < 1e-8);
+    assert(Math.abs(g.survivalTime - 0.1) < 1e-8);
+    assert(Math.abs(g.player.x - x - 25 * speed) < 1e-8);
+    g.pause();
+    g.update(0.1, { x: 1 }, speed);
+    assert(Math.abs(g.survivalTime - 0.1) < 1e-8);
+    g.start();
+    assert.equal(g.survivalTime, 0);
+  }
+  const g = new Game();
+  g.start();
+  g.spawnIn = Infinity;
+  g.hazards = [
+    {
+      kind: "circle",
+      x: 480,
+      y: g.player.y,
+      r: 8,
+      vx: -200,
+      vy: 0,
+      age: 0,
+      warning: 0,
+      life: 10,
+    },
+  ];
+  g.update(0.1, { x: 1 }, 8);
+  assert.equal(g.state, "over");
+  assert(g.survivalTime < 0.1);
+});
+test("speed choices persist and real-time best records stay isolated per speed", () => {
+  const map = new Map(),
+    storage = { getItem: (k) => map.get(k), setItem: (k, v) => map.set(k, v) };
+  assert.equal(readSpeed(storage), 1);
+  saveSpeed(storage, 8);
+  assert.equal(readSpeed(storage), 8);
+  saveBest(storage, 20, 0);
+  saveBest(storage, 3, 0, 8);
+  assert.equal(readBest(storage), 20);
+  assert.equal(readBest(storage, 8), 3);
+  assert.equal(readBest(storage, 2), 0);
+  assert.equal(readSpeed({ getItem: () => 99 }), 1);
+  assert.equal(
+    readSpeed({
+      getItem() {
+        throw Error();
+      },
+    }),
+    1,
+  );
 });
 test("personal best is monotonic and storage failures do not stop game", () => {
   const map = new Map(),

@@ -8,6 +8,8 @@ import {
   readSound,
   saveSound,
   formatTime,
+  readSpeed,
+  saveSpeed,
 } from "./storage.js";
 const $ = (id) => document.getElementById(id);
 const canvas = $("game"),
@@ -20,9 +22,13 @@ try {
 } catch {
   storage = null;
 }
-let best = readBest(storage),
+let selectedSpeed = readSpeed(storage),
+  runSpeed = selectedSpeed;
+$("speed").value = String(selectedSpeed);
+let best = readBest(storage, selectedSpeed),
   saved = true,
   previousBest = best;
+const sessionBests = new Map([[selectedSpeed, best]]);
 audio.enabled = readSound(storage);
 const keys = new Set();
 let drag = null,
@@ -37,13 +43,13 @@ const game = new Game({
     }
     if (event === "preview" || event === "handoff") {
       $("status").textContent =
-        `다음 패턴 ${PATTERNS[(game.pattern + 1) % 4].name}. 남은 장애물을 피하세요.`;
+        `다음 패턴 ${PATTERNS[game.nextPattern].name}. 남은 장애물을 피하세요.`;
       return;
     }
     if (event === "stage") {
       announcementUntil = game.time + 1.1;
       $("announcement").textContent =
-        `STAGE ${String(game.stage + 1).padStart(2, "0")} · ${PATTERNS[game.pattern].name}${game.pattern === 0 && game.stage >= 4 ? " · 다음 순환" : ""}`;
+        `STAGE ${String(game.stage + 1).padStart(2, "0")} · ${PATTERNS[game.pattern].name}${game.stage > 0 && game.stage % PATTERNS.length === 0 ? " · 다음 순환" : ""}`;
       $("status").textContent =
         `${game.stage + 1}단계. ${PATTERNS[game.pattern].hint}`;
       audio.play(event);
@@ -52,8 +58,9 @@ const game = new Game({
     clearInput();
     if (event === "over") {
       previousBest = best;
-      const result = saveBest(storage, game.time, best);
+      const result = saveBest(storage, game.survivalTime, best, runSpeed);
       best = result.best;
+      sessionBests.set(runSpeed, best);
       saved = result.saved;
     }
     if (event === "start") {
@@ -81,6 +88,7 @@ function updateOverlay() {
     paused = state === "paused";
   $("overlay").hidden = state === "playing";
   if (state !== "playing") $("announcement").classList.remove("visible");
+  $("speed").disabled = state === "playing" || state === "paused";
   $("pause").disabled = state === "ready" || isOver;
   $("pause").innerHTML = paused
     ? "▶ <span>재개</span>"
@@ -90,7 +98,7 @@ function updateOverlay() {
   if (state === "ready") return;
   $("overlay-kicker").textContent = paused
     ? "TAKE A BREATH"
-    : game.time > previousBest
+    : game.survivalTime > previousBest
       ? "NEW PERSONAL BEST"
       : "ONE MORE TRY?";
   $("overlay-title").innerHTML = paused
@@ -99,25 +107,44 @@ function updateOverlay() {
   $("overlay-description").textContent = paused
     ? "준비되면 이어서 도전하세요."
     : `${game.stage + 1}단계 · ${PATTERNS[game.pattern].name}에서 생존 종료`;
-  $("result").textContent = `${formatTime(game.time)} s`;
+  $("result").textContent = `${formatTime(game.survivalTime)} s · ${runSpeed}×`;
   $("action").innerHTML = paused
     ? "계속 살아남기 <span>↗</span>"
     : "다시 도전하기 <span>↻</span>";
   $("overlay-hint").textContent = paused
     ? "P / ESC로도 재개할 수 있어요"
     : saved
-      ? "기록은 이 브라우저에 저장됩니다."
+      ? `실제 생존 시간 · ${runSpeed}× 기록 · 다음 도전 ${selectedSpeed}×`
       : "저장소를 사용할 수 없어 기록은 이번 방문 동안 유지됩니다.";
   $("status").textContent = paused
     ? "일시정지"
-    : `게임 종료. 생존 시간 ${formatTime(game.time)}초.`;
+    : `게임 종료. 생존 시간 ${formatTime(game.survivalTime)}초.`;
   if (isOver || paused) $("action").focus({ preventScroll: true });
 }
 function startOrResume() {
   audio.unlock();
   if (game.state === "paused") game.resume();
-  else if (game.state !== "playing") game.start();
+  else if (game.state !== "playing") {
+    runSpeed = selectedSpeed;
+    game.start();
+  }
 }
+$("speed").addEventListener("change", () => {
+  if (game.state === "playing" || game.state === "paused") {
+    $("speed").value = String(selectedSpeed);
+    return;
+  }
+  selectedSpeed = Math.max(
+    1,
+    Math.min(8, Math.round(Number($("speed").value) || 1)),
+  );
+  saveSpeed(storage, selectedSpeed);
+  best = Math.max(
+    readBest(storage, selectedSpeed),
+    sessionBests.get(selectedSpeed) || 0,
+  );
+  updateOverlay();
+});
 $("action").addEventListener("click", startOrResume);
 $("pause").addEventListener("click", () => {
   audio.unlock();
@@ -160,7 +187,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (
     key === "Enter" &&
-    e.target.tagName !== "BUTTON" &&
+    !["BUTTON", "SELECT", "INPUT"].includes(e.target.tagName) &&
     game.state !== "playing"
   ) {
     e.preventDefault();
@@ -233,28 +260,35 @@ function frame(timestamp) {
   const dt =
     lastFrame === null ? 0 : Math.min((timestamp - lastFrame) / 1000, 0.1);
   lastFrame = timestamp;
-  game.update(dt, {
-    x:
-      Number(keys.has("d") || keys.has("ArrowRight")) -
-      Number(keys.has("a") || keys.has("ArrowLeft")),
-    y:
-      Number(keys.has("s") || keys.has("ArrowDown")) -
-      Number(keys.has("w") || keys.has("ArrowUp")),
-    target,
-  });
+  game.update(
+    dt,
+    {
+      x:
+        Number(keys.has("d") || keys.has("ArrowRight")) -
+        Number(keys.has("a") || keys.has("ArrowLeft")),
+      y:
+        Number(keys.has("s") || keys.has("ArrowDown")) -
+        Number(keys.has("w") || keys.has("ArrowUp")),
+      target,
+    },
+    runSpeed,
+  );
   renderer.draw(game, timestamp / 1000);
-  $("time").innerHTML = `${formatTime(game.time)}<small>s</small>`;
+  $("time").innerHTML = `${formatTime(game.survivalTime)}<small>s</small>`;
+  $("best-label").textContent = `이 브라우저 최고 기록 · ${selectedSpeed}×`;
   $("best").innerHTML = `${formatTime(best)}<small>s</small>`;
   $("stage").textContent = `STAGE ${String(game.stage + 1).padStart(2, "0")}`;
-  if (game.stage >= 4)
-    $("stage").textContent += ` · LOOP ${Math.floor(game.stage / 4) + 1}`;
-  const next = PATTERNS[(game.pattern + 1) % PATTERNS.length];
+  if (game.stage >= PATTERNS.length)
+    $("stage").textContent +=
+      ` · LOOP ${Math.floor(game.stage / PATTERNS.length) + 1}`;
+  const next = PATTERNS[game.nextPattern];
   $("pattern").textContent = game.handoff
     ? `${PATTERNS[game.pattern].name} · 마무리`
     : PATTERNS[game.pattern].name;
   $("handoff").hidden = !game.preview || game.state !== "playing";
   $("handoff").textContent =
-    `NEXT / ${next.name} · ${game.pattern === 3 ? `${Math.floor(game.stage / 4) + 2}회차` : next.hint}`;
+    `NEXT / ${next.name} · ${game.stage % PATTERNS.length === PATTERNS.length - 1 ? `${Math.floor(game.stage / PATTERNS.length) + 2}회차` : next.hint}`;
+  $("pattern-hint").textContent = PATTERNS[game.pattern].hint;
   $("arena").style.setProperty("--next-color", next.color);
   $("progress").style.width =
     `${Math.max(0, Math.min(1, game.stageTime / PATTERN_DURATION)) * 100}%`;
@@ -266,8 +300,7 @@ function frame(timestamp) {
     el.classList.toggle("active", Number(el.dataset.pattern) === game.pattern);
     el.classList.toggle(
       "up-next",
-      game.handoff &&
-        Number(el.dataset.pattern) === (game.pattern + 1) % PATTERNS.length,
+      game.handoff && Number(el.dataset.pattern) === game.nextPattern,
     );
   });
   requestAnimationFrame(frame);

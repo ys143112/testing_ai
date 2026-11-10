@@ -1,5 +1,5 @@
 import { tangent, support } from "./geometry.js";
-import { WIDTH, HEIGHT, PATTERNS } from "./patterns.js";
+import { WIDTH, HEIGHT, PATTERNS, PATTERN_TEMPO } from "./patterns.js";
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -122,6 +122,26 @@ export class Renderer {
         len = Math.hypot(h.vx, h.vy) || 1,
         n = { x: h.vx / len, y: h.vy / len },
         t = tangent(n);
+      if (h.aimed && h.target) {
+        c.strokeStyle = h.color;
+        c.globalAlpha = 0.18;
+        c.lineWidth = 1;
+        c.setLineDash([5, 8]);
+        c.beginPath();
+        c.moveTo(x, y);
+        c.lineTo(h.target.x, h.target.y);
+        c.stroke();
+        c.setLineDash([]);
+        c.beginPath();
+        c.arc(h.target.x, h.target.y, 12, 0, Math.PI * 2);
+        c.stroke();
+      }
+      if (h.orbit && h.cue) {
+        c.globalAlpha = 0.14;
+        c.beginPath();
+        c.arc(h.orbit.cx, h.orbit.cy, h.orbit.radius, 0, Math.PI * 2);
+        c.stroke();
+      }
       c.globalAlpha = 0.45 + (0.45 * h.age) / h.warning;
       c.lineWidth = 1.5;
       c.beginPath();
@@ -144,7 +164,9 @@ export class Renderer {
       c.lineTo(h.x - h.vx * 0.15, h.y - h.vy * 0.15);
       c.lineWidth = h.r;
       c.stroke();
-      c.globalAlpha = 1;
+      c.globalAlpha = h.boundedLifetime
+        ? Math.min(1, (h.life - h.age) / (0.25 * PATTERN_TEMPO))
+        : 1;
       c.beginPath();
       c.arc(h.x, h.y, h.r, 0, Math.PI * 2);
       c.fill();
@@ -153,6 +175,59 @@ export class Renderer {
       c.beginPath();
       c.arc(h.x - 2, h.y - 2, h.r * 0.35, 0, Math.PI * 2);
       c.fill();
+    }
+  }
+  drawZone(c, h, warning) {
+    const p = warning ? h.age / h.warning : 1,
+      fade = Math.min(1, (h.life - h.age) / (0.25 * PATTERN_TEMPO));
+    c.fillStyle = h.color;
+    c.strokeStyle = h.color;
+    c.lineWidth = 2;
+    c.globalAlpha = (warning ? 0.1 : 0.6) * fade;
+    c.beginPath();
+    c.arc(h.x, h.y, h.r, 0, Math.PI * 2);
+    c.fill();
+    c.globalAlpha = 0.9 * fade;
+    c.setLineDash(warning ? [7, 6] : []);
+    c.stroke();
+    c.setLineDash([]);
+    if (warning) {
+      c.lineWidth = 4;
+      c.beginPath();
+      c.arc(h.x, h.y, h.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+      c.stroke();
+      c.globalAlpha = 0.25;
+      c.beginPath();
+      c.arc(h.x, h.y, h.r * p, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  drawCrusher(c, h, warning) {
+    const fade = Math.min(1, (h.life - h.age) / (0.25 * PATTERN_TEMPO));
+    c.save();
+    c.translate(h.x, h.y);
+    c.rotate(h.angle);
+    c.fillStyle = h.color;
+    c.strokeStyle = h.color;
+    c.globalAlpha = (warning ? 0.35 : 0.9) * fade;
+    c.lineWidth = 2;
+    c.setLineDash(warning ? [7, 5] : []);
+    c.fillRect(-h.halfW, -h.halfH, h.halfW * 2, h.halfH * 2);
+    c.strokeRect(-h.halfW, -h.halfH, h.halfW * 2, h.halfH * 2);
+    c.restore();
+    if (h.cue && warning) {
+      const { x, y, n } = h.escape,
+        t = tangent(n);
+      c.strokeStyle = h.color;
+      c.lineWidth = 4;
+      c.globalAlpha = 0.9;
+      c.beginPath();
+      c.moveTo(x - n.x * 15, y - n.y * 15);
+      c.lineTo(x + n.x * 15, y + n.y * 15);
+      c.moveTo(x + n.x * 5 - t.x * 10, y + n.y * 5 - t.y * 10);
+      c.lineTo(x + n.x * 15, y + n.y * 15);
+      c.lineTo(x + n.x * 5 + t.x * 10, y + n.y * 5 + t.y * 10);
+      c.stroke();
     }
   }
   draw(game, clock) {
@@ -202,7 +277,7 @@ export class Renderer {
       WIDTH * 0.6,
     );
     const target =
-      PATTERNS[(game.pattern + (game.preview ? 1 : 0)) % PATTERNS.length].color;
+      PATTERNS[game.preview ? game.nextPattern : game.pattern].color;
     this.tint = this.tint.map(
       (value, i) =>
         value +
@@ -217,6 +292,8 @@ export class Renderer {
       const warning = h.age < h.warning;
       if (h.kind === "laser") this.drawLaser(c, h, warning);
       else if (h.kind === "wall") this.drawWall(c, h, warning);
+      else if (h.kind === "zone") this.drawZone(c, h, warning);
+      else if (h.kind === "crusher") this.drawCrusher(c, h, warning);
       else this.drawCircle(c, h, warning);
       c.restore();
     }

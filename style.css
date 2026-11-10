@@ -820,3 +820,68 @@ kbd {
     margin-top: 10px;
   }
 }
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 9px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.speed-control select {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 40px;
+  min-width: 43px;
+  background: transparent;
+  color: var(--mint);
+  border: 0;
+  cursor: pointer;
+}
+.speed-control select:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.speed-control select:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+.icon-button[aria-pressed="true"] {
+  color: var(--mint);
+}
+@media (max-width: 450px) {
+  .tools .icon-button span {
+    display: none;
+  }
+  .speed-control {
+    padding: 0 6px;
+    gap: 3px;
+  }
+  .speed-control > span {
+    font-size: 8px;
+  }
+  .speed-control select {
+    font-size: 11px;
+    min-width: 35px;
+  }
+  .topbar {
+    gap: 8px;
+  }
+  .brand {
+    letter-spacing: 1px;
+    font-size: 9px;
+  }
+  .tools {
+    gap: 5px;
+  }
+}
+
+@media (max-width: 360px) {
+  .speed-control > span {
+    display: none;
+  }
+}

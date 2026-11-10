@@ -24,6 +24,23 @@
           ><span>TEN <i>/</i> SECONDS<small>SURVIVAL ARCADE</small></span></a
         >
         <div class="tools">
+          <label class="speed-control"
+            ><span>배속 · 실험</span
+            ><select
+              id="speed"
+              aria-label="게임 배속"
+              title="새 도전 전에 배속을 선택하세요"
+            >
+              <option value="1">1×</option>
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="4">4×</option>
+              <option value="5">5×</option>
+              <option value="6">6×</option>
+              <option value="7">7×</option>
+              <option value="8">8×</option>
+            </select></label
+          >
           <button
             id="sound"
             class="icon-button"
@@ -50,7 +67,7 @@
           <p class="subtitle">피하고, 흐름을 타고, 다음 패턴으로.</p>
         </div>
         <div class="personal-best">
-          <span>이 브라우저 최고 기록</span
+          <span id="best-label">이 브라우저 최고 기록 · 1×</span
           ><strong id="best">00.00<small>s</small></strong>
         </div>
       </section>
@@ -113,7 +130,9 @@
           <div class="arena-footer">
             <span><i class="player-dot"></i> YOU</span
             ><span><i class="danger-dot"></i> DANGER</span
-            ><span class="footer-right">작은 틈을 찾으세요.</span>
+            ><span class="footer-right" id="pattern-hint"
+              >작은 틈을 찾으세요.</span
+            >
           </div>
         </div>
         <aside class="sidebar">
@@ -177,8 +196,40 @@
                 </div>
                 <span>04</span>
               </li>
+              <li data-pattern="4">
+                <span class="pattern-symbol">◉</span>
+                <div>
+                  <strong>잔상</strong
+                  ><small>발밑의 위험 원을 벗어나세요</small>
+                </div>
+                <span>05</span>
+              </li>
+              <li data-pattern="5">
+                <span class="pattern-symbol">◌</span>
+                <div>
+                  <strong>궤도</strong
+                  ><small>회전 궤도의 안팎으로 이동하세요</small>
+                </div>
+                <span>06</span>
+              </li>
+              <li data-pattern="6">
+                <span class="pattern-symbol">⌑</span>
+                <div>
+                  <strong>압축 구역</strong
+                  ><small>열린 쪽으로 상자를 탈출하세요</small>
+                </div>
+                <span>07</span>
+              </li>
+              <li data-pattern="7">
+                <span class="pattern-symbol">⌁</span>
+                <div>
+                  <strong>반사탄</strong
+                  ><small>튕긴 뒤의 경로까지 살피세요</small>
+                </div>
+                <span>08</span>
+              </li>
             </ol>
-            <p class="cycle-note">패턴은 순환하고, 도전은 깊어집니다.</p>
+            <p class="cycle-note">8개 패턴을 섞어, 매번 다른 흐름으로.</p>
           </section>
           <div class="small-note">
             <span>↻</span>

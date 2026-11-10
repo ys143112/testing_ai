@@ -67,6 +67,13 @@ export function safePolygon(walls, radius = 42) {
   }
   return poly;
 }
+export function projectionSlice(polygon, n, low = -Infinity, high = Infinity) {
+  const offset = (FIELD_SIZE / 2) * (n.x + n.y);
+  if (Number.isFinite(high)) polygon = clip(polygon, n, high + offset);
+  if (Number.isFinite(low))
+    polygon = clip(polygon, { x: -n.x, y: -n.y }, -low - offset);
+  return polygon;
+}
 export function closestPoint(p, poly) {
   if (!poly.length) throw Error("No safe corridor intersection");
   let inside = true,
