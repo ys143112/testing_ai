@@ -16,7 +16,12 @@ export class Renderer {
   }
   viewport() {
     const r = this.canvas.getBoundingClientRect();
-    return { scale: Math.min(r.width / WIDTH, r.height / HEIGHT) };
+    const scale = Math.min(r.width / WIDTH, r.height / HEIGHT);
+    return {
+      scale,
+      offsetX: (r.width - WIDTH * scale) / 2,
+      offsetY: (r.height - HEIGHT * scale) / 2,
+    };
   }
   drawLaser(c, h, warning) {
     c.save();
@@ -230,7 +235,7 @@ export class Renderer {
       c.stroke();
     }
   }
-  draw(game, clock) {
+  draw(game, clock, destination = null) {
     const c = this.ctx,
       scale = Math.min(this.canvas.width / WIDTH, this.canvas.height / HEIGHT);
     c.setTransform(1, 0, 0, 1, 0, 0);
@@ -295,6 +300,24 @@ export class Renderer {
       else if (h.kind === "zone") this.drawZone(c, h, warning);
       else if (h.kind === "crusher") this.drawCrusher(c, h, warning);
       else this.drawCircle(c, h, warning);
+      c.restore();
+    }
+    if (destination && game.state === "playing") {
+      c.save();
+      c.strokeStyle = "#89f9c4";
+      c.globalAlpha = 0.55;
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.arc(destination.x, destination.y, 9, 0, Math.PI * 2);
+      c.moveTo(destination.x - 13, destination.y);
+      c.lineTo(destination.x - 5, destination.y);
+      c.moveTo(destination.x + 5, destination.y);
+      c.lineTo(destination.x + 13, destination.y);
+      c.moveTo(destination.x, destination.y - 13);
+      c.lineTo(destination.x, destination.y - 5);
+      c.moveTo(destination.x, destination.y + 5);
+      c.lineTo(destination.x, destination.y + 13);
+      c.stroke();
       c.restore();
     }
     if (!this.reduced)

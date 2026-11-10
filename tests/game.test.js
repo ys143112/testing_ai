@@ -801,6 +801,25 @@ test("1x to 8x accelerates physics but counts real survival seconds and pause ex
   assert.equal(g.state, "over");
   assert(g.survivalTime < 0.1);
 });
+test("mouse destinations and keyboard movement keep equal speed at every playback rate", () => {
+  for (let speed = 1; speed <= 8; speed++) {
+    const mouse = new Game(),
+      keyboard = new Game();
+    mouse.start();
+    keyboard.start();
+    const start = { ...mouse.player };
+    mouse.spawnIn = Infinity;
+    keyboard.spawnIn = Infinity;
+    mouse.update(0.1, { target: { x: 580, y: 20 } }, speed);
+    keyboard.update(0.1, { x: 1, y: -1 }, speed);
+    assert(
+      Math.abs(
+        Math.hypot(mouse.player.x - start.x, mouse.player.y - start.y) -
+          Math.hypot(keyboard.player.x - start.x, keyboard.player.y - start.y),
+      ) < 1e-7,
+    );
+  }
+});
 test("speed choices persist and real-time best records stay isolated per speed", () => {
   const map = new Map(),
     storage = { getItem: (k) => map.get(k), setItem: (k, v) => map.set(k, v) };

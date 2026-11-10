@@ -124,6 +124,112 @@ async function waitServer() {
     "true",
   );
   await page.getByRole("button", { name: "소리 끄기" }).click();
+  // Mouse clicks keep moving after release; movement is measured in game
+  // coordinates from the real canvas pixels, with no app state test hook.
+  async function playerAt(p) {
+    return p.locator("#game").evaluate((c) => {
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let x = 0,
+        y = 0,
+        n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (
+          d[i] > 100 &&
+          d[i] < 180 &&
+          d[i + 1] > 230 &&
+          d[i + 2] > 170 &&
+          d[i + 2] < 220
+        ) {
+          x += (i / 4) % c.width;
+          y += Math.floor(i / 4 / c.width);
+          n++;
+        }
+      }
+      return { x: ((x / n) * 600) / c.width, y: ((y / n) * 600) / c.height };
+    });
+  }
+  const mouse = await browser.newPage({
+    viewport: { width: 1280, height: 1000 },
+    deviceScaleFactor: 2,
+  });
+  mouse.on("pageerror", (e) => errors.push(e.message));
+  await mouse.clock.install();
+  await mouse.goto(url);
+  await mouse.clock.pauseAt(await mouse.evaluate(() => Date.now() + 1000));
+  await mouse.locator("#action").dispatchEvent("click");
+  await mouse.clock.runFor(20);
+  const mouseBox = await mouse.locator("#game").boundingBox(),
+    point = (x, y) => ({
+      x: mouseBox.x + (x / 600) * mouseBox.width,
+      y: mouseBox.y + (y / 600) * mouseBox.height,
+    });
+  const initial = await playerAt(mouse);
+  await mouse.mouse.click(point(500, initial.y).x, point(500, initial.y).y);
+  await mouse.mouse.move(point(60, 60).x, point(60, 60).y);
+  await mouse.clock.runFor(200);
+  const first = await playerAt(mouse);
+  assert(
+    Math.abs(first.x - initial.x - 50) < 4 && Math.abs(first.y - initial.y) < 2,
+    "released click must move at keyboard speed and ignore cursor hover",
+  );
+  await mouse.clock.runFor(200);
+  const second = await playerAt(mouse);
+  assert(second.x > first.x + 40);
+  await mouse.clock.runFor(500);
+  const arrived = await playerAt(mouse);
+  assert(Math.abs(arrived.x - 500) < 2);
+  await mouse.clock.runFor(100);
+  assert(Math.abs((await playerAt(mouse)).x - arrived.x) < 1);
+  await mouse.evaluate(() => {
+    window.__contextPrevented = false;
+    window.addEventListener(
+      "contextmenu",
+      (e) => {
+        window.__contextPrevented = e.defaultPrevented;
+      },
+      { once: true },
+    );
+  });
+  await mouse.mouse.click(point(500, 130).x, point(500, 130).y, {
+    button: "right",
+  });
+  await mouse.clock.runFor(100);
+  const right = await playerAt(mouse);
+  assert(right.y < arrived.y - 20 && Math.abs(right.x - arrived.x) < 2);
+  assert(await mouse.evaluate(() => window.__contextPrevented));
+  await mouse.mouse.click(point(130, right.y).x, point(130, right.y).y);
+  await mouse.clock.runFor(100);
+  const retargeted = await playerAt(mouse);
+  assert(retargeted.x < right.x - 20 && Math.abs(retargeted.y - right.y) < 2);
+  await mouse.keyboard.down("ArrowDown");
+  await mouse.clock.runFor(100);
+  await mouse.keyboard.up("ArrowDown");
+  const keyboard = await playerAt(mouse);
+  assert(
+    Math.abs(keyboard.x - retargeted.x) < 2 && keyboard.y > retargeted.y + 20,
+  );
+  await mouse.clock.runFor(100);
+  const stopped = await playerAt(mouse);
+  assert(
+    Math.hypot(stopped.x - keyboard.x, stopped.y - keyboard.y) < 2,
+    "keyboard must cancel the old click order",
+  );
+  await mouse.mouse.click(point(120, stopped.y).x, point(120, stopped.y).y);
+  await mouse.clock.runFor(50);
+  await mouse.keyboard.press("p");
+  const pausedPosition = await playerAt(mouse);
+  await mouse.clock.runFor(300);
+  await mouse.locator("#action").dispatchEvent("click");
+  await mouse.clock.runFor(100);
+  const resumedPosition = await playerAt(mouse);
+  assert(
+    Math.hypot(
+      resumedPosition.x - pausedPosition.x,
+      resumedPosition.y - pausedPosition.y,
+    ) < 2,
+    "pause must cancel click destination",
+  );
+  await mouse.close();
   // Exercise real diagonal beam rendering, including charge visibility and
   // the absence of small numeric countdown labels.
   await page.evaluate(async () => {
@@ -317,6 +423,12 @@ async function waitServer() {
     touchPoints: [],
   });
   const after = await playerCenter();
+  await mp.clock.runFor(100);
+  const released = await playerCenter();
+  assert(
+    Math.hypot(released.x - after.x, released.y - after.y) < 2,
+    "touch release must stop relative movement",
+  );
   assert(
     after.x > before.x + 20 && after.y < before.y - 15,
     "touch drag must visibly move player relatively",
@@ -431,7 +543,7 @@ async function waitServer() {
   }
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: browser start, keyboard, pause/resume, blur, hidden tab, resize, real collision, restart, best reload, sound, blocked storage, mobile touch, full attacks and seamless handoff, DPR and subdirectory.",
+    "PASS: browser start, keyboard, click-to-move and retarget/cancel, pause/resume, blur, hidden tab, resize, real collision, restart, best reload, sound, blocked storage, mobile touch, full attacks and seamless handoff, DPR and subdirectory.",
   );
 })()
   .catch((e) => {

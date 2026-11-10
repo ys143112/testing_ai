@@ -33,6 +33,7 @@ audio.enabled = readSound(storage);
 const keys = new Set();
 let drag = null,
   target = null,
+  targetMode = null,
   announcementUntil = 0,
   lastFrame = null;
 const game = new Game({
@@ -75,6 +76,7 @@ function clearInput() {
   keys.clear();
   drag = null;
   target = null;
+  targetMode = null;
 }
 function updateSound() {
   const b = $("sound");
@@ -175,6 +177,8 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     keys.add(key);
     target = null;
+    targetMode = null;
+    drag = null;
   }
   if (e.repeat) return;
   if (
@@ -198,13 +202,36 @@ window.addEventListener("keyup", (e) =>
   keys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key),
 );
 canvas.addEventListener("pointerdown", (e) => {
-  if (
-    game.state !== "playing" ||
-    (e.pointerType === "mouse" && e.button !== 0) ||
-    drag
-  )
+  if (game.state !== "playing") return;
+  if (e.pointerType === "mouse") {
+    if (e.button !== 0 && e.button !== 2) return;
+    e.preventDefault();
+    keys.clear();
+    drag = null;
+    const rect = canvas.getBoundingClientRect(),
+      viewport = renderer.viewport();
+    target = {
+      x: Math.max(
+        12,
+        Math.min(
+          WIDTH - 12,
+          (e.clientX - rect.left - viewport.offsetX) / viewport.scale,
+        ),
+      ),
+      y: Math.max(
+        12,
+        Math.min(
+          HEIGHT - 12,
+          (e.clientY - rect.top - viewport.offsetY) / viewport.scale,
+        ),
+      ),
+    };
+    targetMode = "mouse";
     return;
+  }
+  if (drag) return;
   e.preventDefault();
+  keys.clear();
   canvas.setPointerCapture(e.pointerId);
   const scale = renderer.viewport().scale;
   drag = {
@@ -217,6 +244,10 @@ canvas.addEventListener("pointerdown", (e) => {
     sy: 1 / scale,
   };
   target = { x: game.player.x, y: game.player.y };
+  targetMode = "touch";
+});
+canvas.addEventListener("contextmenu", (e) => {
+  if (game.state === "playing") e.preventDefault();
 });
 canvas.addEventListener("pointermove", (e) => {
   if (!drag || e.pointerId !== drag.id) return;
@@ -236,6 +267,7 @@ function stopDrag(e) {
   if (drag?.id === e.pointerId) {
     drag = null;
     target = null;
+    targetMode = null;
   }
 }
 for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
@@ -273,7 +305,15 @@ function frame(timestamp) {
     },
     runSpeed,
   );
-  renderer.draw(game, timestamp / 1000);
+  if (
+    targetMode === "mouse" &&
+    target &&
+    Math.hypot(target.x - game.player.x, target.y - game.player.y) < 0.5
+  ) {
+    target = null;
+    targetMode = null;
+  }
+  renderer.draw(game, timestamp / 1000, targetMode === "mouse" ? target : null);
   $("time").innerHTML = `${formatTime(game.survivalTime)}<small>s</small>`;
   $("best-label").textContent = `이 브라우저 최고 기록 · ${selectedSpeed}×`;
   $("best").innerHTML = `${formatTime(best)}<small>s</small>`;
