@@ -8,6 +8,7 @@ import {
   PATTERN_DURATION,
   PATTERN_TEMPO,
   LASER_MIN_WARNING,
+  cycleLevel,
 } from "../src/patterns.js";
 import { readBest, saveBest, formatTime } from "../src/storage.js";
 function rng(seed = 1) {
@@ -427,6 +428,120 @@ test("patterns leave gaps, telegraph danger and difficulty converges", () => {
     }
   assert(difficulty(200) > difficulty(20));
   assert(difficulty(1e6) <= 2.35);
+});
+test("rain uses all four borders and a wrapped round is structurally stronger than the previous fan", () => {
+  const initialEntries = new Set();
+  for (let seed = 1; seed <= 200; seed++) {
+    const g = new Game({ random: rng(seed) });
+    g.start();
+    spawnWave(g);
+    g.hazards.forEach((h) => initialEntries.add(h.entry));
+  }
+  assert.equal(initialEntries.size, 4);
+  function sequence(stage) {
+    const g = new Game({ random: rng(42) });
+    g.start();
+    g.stage = stage;
+    g.pattern = stage % 4;
+    g.stageTime = 0;
+    g.time = 30;
+    const hazards = [],
+      primary = new Set(),
+      all = new Set();
+    let waves = 0;
+    while (g.stageTime < 5) {
+      g.hazards = [];
+      g.wave = waves++;
+      const interval = spawnWave(g);
+      for (const h of g.hazards) {
+        hazards.push(h);
+        all.add(h.entry);
+        if (!h.crossfire) primary.add(h.entry);
+      }
+      g.stageTime += interval;
+    }
+    return { hazards, primary, all, waves };
+  }
+  const intro = sequence(0),
+    returning = sequence(4),
+    third = sequence(8),
+    fan = sequence(3);
+  assert.equal(intro.primary.size, 1);
+  assert.equal(returning.primary.size, 2);
+  assert.equal(returning.all.size, 4);
+  assert.equal(third.primary.size, 4);
+  assert(returning.hazards.length > intro.hazards.length * 1.5);
+  assert(returning.hazards.length > fan.hazards.length);
+  assert(returning.waves >= intro.waves);
+  assert(returning.hazards.every((h) => h.warning / PATTERN_TEMPO >= 0.65));
+  assert.equal(cycleLevel(0), 0);
+  assert.equal(cycleLevel(4), 1);
+  assert.equal(cycleLevel(8), 2);
+  assert.equal(cycleLevel(12), 3);
+  assert.equal(cycleLevel(400), 3);
+});
+test("opposing gates preserve a common corridor throughout later rounds and expose all four entrances", () => {
+  for (const stage of [5, 9, 13, 401])
+    for (let seed = 1; seed <= 80; seed++) {
+      const entries = new Set();
+      const g = new Game({ random: rng(seed) });
+      g.start();
+      g.stage = stage;
+      g.pattern = 1;
+      g.stageTime = 0;
+      g.spawnIn = 0;
+      g.time = 35;
+      g.end = () => {};
+      let paired = false,
+        crossfire = false;
+      for (let f = 0; f < 9 * 120 && g.stage === stage; f++) {
+        g.update(1 / 120);
+        const walls = g.hazards.filter((h) => h.kind === "rect");
+        if (walls.length) {
+          paired ||=
+            walls.some((h) => h.vx < 0 || h.vy < 0) &&
+            walls.some((h) => h.vx > 0 || h.vy > 0);
+          const lo = Math.max(...walls.map((h) => h.openLo)),
+            hi = Math.min(...walls.map((h) => h.openHi));
+          assert(
+            hi - lo >= 44 - 1e-8,
+            `pinch trap at stage ${stage}, seed ${seed}`,
+          );
+        }
+        g.hazards.forEach((h) => {
+          entries.add(h.entry);
+          crossfire ||= !!h.crossfire;
+        });
+      }
+      assert(paired && crossfire);
+      assert.equal(entries.size, 4);
+    }
+});
+test("cycle progression survives 4 to 1, resets on retry, and never reduces laser warning", () => {
+  const g = new Game({ random: rng(5) });
+  g.start();
+  g.stage = 3;
+  g.pattern = 3;
+  g.handoff = true;
+  g.stageTime = 6;
+  g.update(1 / 120);
+  assert.equal(g.stage, 4);
+  assert.equal(g.pattern, 0);
+  assert.equal(cycleLevel(g.stage), 1);
+  g.update(1 / 120);
+  assert(g.hazards.some((h) => h.crossfire));
+  for (const stage of [2, 6, 10, 402]) {
+    g.stage = stage;
+    g.pattern = 2;
+    g.stageTime = 0;
+    g.hazards = [];
+    spawnWave(g);
+    assert.equal(g.hazards.length, 1);
+    assert(g.hazards[0].warning / PATTERN_TEMPO >= 0.9);
+  }
+  g.start();
+  assert.equal(cycleLevel(g.stage), 0);
+  assert.equal(g.hazards.length, 0);
 });
 test("personal best is monotonic and storage failures do not stop game", () => {
   const map = new Map(),

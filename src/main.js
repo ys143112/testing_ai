@@ -43,7 +43,7 @@ const game = new Game({
     if (event === "stage") {
       announcementUntil = game.time + 1.1;
       $("announcement").textContent =
-        `STAGE ${String(game.stage + 1).padStart(2, "0")} · ${PATTERNS[game.pattern].name}`;
+        `STAGE ${String(game.stage + 1).padStart(2, "0")} · ${PATTERNS[game.pattern].name}${game.pattern === 0 && game.stage >= 4 ? " · 강화된 다음 순환" : ""}`;
       $("status").textContent =
         `${game.stage + 1}단계. ${PATTERNS[game.pattern].hint}`;
       audio.play(event);
@@ -246,12 +246,15 @@ function frame(timestamp) {
   $("time").innerHTML = `${formatTime(game.time)}<small>s</small>`;
   $("best").innerHTML = `${formatTime(best)}<small>s</small>`;
   $("stage").textContent = `STAGE ${String(game.stage + 1).padStart(2, "0")}`;
+  if (game.stage >= 4)
+    $("stage").textContent += ` · LOOP ${Math.floor(game.stage / 4) + 1}`;
   const next = PATTERNS[(game.pattern + 1) % PATTERNS.length];
   $("pattern").textContent = game.handoff
     ? `${PATTERNS[game.pattern].name} · 마무리`
     : PATTERNS[game.pattern].name;
   $("handoff").hidden = !game.preview || game.state !== "playing";
-  $("handoff").textContent = `NEXT / ${next.name} · ${next.hint}`;
+  $("handoff").textContent =
+    `NEXT / ${next.name} · ${game.pattern === 3 ? `${Math.floor(game.stage / 4) + 2}회차 강화` : next.hint}`;
   $("arena").style.setProperty("--next-color", next.color);
   $("progress").style.width =
     `${Math.max(0, Math.min(1, game.stageTime / PATTERN_DURATION)) * 100}%`;

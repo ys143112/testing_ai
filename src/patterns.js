@@ -15,8 +15,10 @@ export function difficulty(time) {
 // One plan per stage, plus bounded variation within each wave. Injected random
 // keeps every run different while allowing seeded balance regression tests.
 export function createPatternPlan(random, route) {
+  const rainEdge = Math.floor(random() * 4);
   return {
-    rainLane: clamp(Math.round(route.x * 5), 1, 4),
+    rainEdge,
+    rainLane: clamp(Math.round((rainEdge % 2 ? route.y : route.x) * 5), 1, 4),
     rainDirection: random() < 0.5 ? -1 : 1,
     gateHorizontal: random() < 0.5,
     gateReverse: random() < 0.5,
@@ -29,11 +31,49 @@ export function createPatternPlan(random, route) {
     fanAmplitude: 0.12 + random() * 0.1,
   };
 }
+// Structural progression survives a 4 -> 1 wrap; speed alone felt like a reset.
+export const cycleLevel = (stage) =>
+  Math.min(3, Math.floor(stage / PATTERNS.length));
 export const LASER_MIN_WARNING = 0.9;
+// A few telegraphed aimed shots add a second axis of pressure without creating
+// crossing solid walls. The aim is fixed when announced, never homing.
+function addCrossfire(game, edge, count) {
+  const { random: r, player: p, hazards } = game;
+  const side = edge % 2 === 1;
+  const across = clamp(
+    (side ? p.y : p.x) + (r() - 0.5) * 150,
+    65,
+    (side ? HEIGHT : WIDTH) - 65,
+  );
+  const x = edge === 1 ? WIDTH + 24 : edge === 3 ? -24 : across;
+  const y = edge === 0 ? -24 : edge === 2 ? HEIGHT + 24 : across;
+  const aim = Math.atan2(p.y - y, p.x - x);
+  const speed = 110 + 20 * difficulty(game.time);
+  for (let i = 0; i < count; i++) {
+    const angle = aim + (i - (count - 1) / 2) * 0.26;
+    hazards.push({
+      kind: "circle",
+      x,
+      y,
+      r: 6,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      age: 0,
+      warning: 1.6,
+      life: 8,
+      color: PATTERNS[game.pattern].color,
+      entry: edge,
+      crossfire: true,
+    });
+  }
+}
 function populateWave(game) {
   const { random: r, pattern, time, player: p } = game;
   const route = game.route || { x: 0.5, y: 0.5 };
   const plan = game.plan;
+  const level = cycleLevel(game.stage);
+  const cadence = 1 + level * 0.16;
+  const speedScale = 1 + level * 0.08;
   const d = difficulty(time),
     hazards = game.hazards;
   if (pattern === 0) {
@@ -41,33 +81,48 @@ function populateWave(game) {
       plan.rainLane = clamp(plan.rainLane + (r() < 0.5 ? -1 : 1), 1, 4);
     if (game.wave > 0 && r() < 0.3) plan.rainDirection *= -1;
     const gap = plan.rainLane;
+    const edge =
+      (plan.rainEdge + (level ? game.wave * (level >= 2 ? 1 : 2) : 0)) % 4;
+    const span = edge % 2 ? HEIGHT : WIDTH;
     const drift = plan.rainDirection * (22 + r() * 18);
-    const fallSpeed = (105 + d * 30) * (0.94 + r() * 0.12);
+    const fallSpeed = (105 + d * 30) * (0.94 + r() * 0.12) * speedScale;
     for (let i = 0; i < 6; i++) {
-      if (i === gap || (i + 1) % 6 === gap || hazards.length >= 100) continue;
-      const x = i * 100 + 25 + r() * 45;
+      if (i === gap || (!level && (i + 1) % 6 === gap) || hazards.length >= 100)
+        continue;
+      const across = ((i + 0.25 + r() * 0.45) * span) / 6;
+      const driftSpeed = drift + (r() - 0.5) * 12;
       hazards.push({
         kind: "circle",
-        x,
-        y: -24,
+        x: edge === 1 ? WIDTH + 24 : edge === 3 ? -24 : across,
+        y: edge === 0 ? -24 : edge === 2 ? HEIGHT + 24 : across,
         r: 9 + r() * 5,
-        vx: drift + (r() - 0.5) * 12,
-        vy: fallSpeed,
+        vx: edge === 1 ? -fallSpeed : edge === 3 ? fallSpeed : driftSpeed,
+        vy: edge === 0 ? fallSpeed : edge === 2 ? -fallSpeed : driftSpeed,
         age: 0,
-        warning: 0.55,
+        warning: level ? 1.3 : 0.85,
+        entry: edge,
         life: 7,
         color: PATTERNS[0].color,
       });
     }
-    return (1.2 / Math.sqrt(d)) * (0.9 + r() * 0.2);
+    if (level)
+      addCrossfire(
+        game,
+        (plan.rainEdge + 1 + (game.wave % 2) * 2) % 4,
+        level >= 2 ? 3 : 2,
+      );
+    return Math.max(0.64, ((1.2 / Math.sqrt(d)) * (0.9 + r() * 0.2)) / cadence);
   }
   if (pattern === 1) {
     // Keep one travel direction for this sequence; randomize the next one.
     // The opening walks to both edges instead of oscillating around the center.
     const horizontal = plan.gateHorizontal;
-    const gap = 164 - (d - 1) * 12 - r() * 22;
+    const gap = Math.max(112, 164 - (d - 1) * 12 - r() * 22 - level * 6);
     const range = horizontal ? WIDTH : HEIGHT;
-    const interval = (2.3 / Math.sqrt(d)) * (0.93 + r() * 0.14);
+    const interval = Math.max(
+      1.35,
+      ((2.3 / Math.sqrt(d)) * (0.93 + r() * 0.14)) / cadence,
+    );
     const margin = gap / 2 + 22;
     if (plan.gateCenter === null)
       plan.gateCenter = range * (horizontal ? route.x : route.y);
@@ -79,11 +134,22 @@ function populateWave(game) {
       const maxShift = Math.min(145, 250 * spacing * 0.7);
       plan.gateCenter += plan.gateDirection * maxShift * (0.78 + r() * 0.22);
     }
-    const center = clamp(plan.gateCenter, margin, range - margin);
+    let center = clamp(plan.gateCenter, margin, range - margin);
+    if (level) {
+      const live = (game.liveHazards || []).filter(
+        (h) => h.gateAxis === (horizontal ? "x" : "y"),
+      );
+      if (live.length) {
+        const lo = Math.max(...live.map((h) => h.openLo));
+        const hi = Math.min(...live.map((h) => h.openHi));
+        // Opposing rows must share a real corridor until all old rows leave.
+        center = clamp(center, lo + 44 - gap / 2, hi - 44 + gap / 2);
+      }
+    }
     if (center <= margin || center >= range - margin) plan.gateDirection *= -1;
     plan.gateCenter = center;
     plan.gateInterval = interval / PATTERN_TEMPO;
-    const speed = (120 + 24 * d) * (plan.gateReverse ? -1 : 1);
+    const speed = (120 + 24 * d) * speedScale * (plan.gateReverse ? -1 : 1);
     if (horizontal) {
       hazards.push(
         {
@@ -142,6 +208,36 @@ function populateWave(game) {
           color: PATTERNS[1].color,
         },
       );
+    }
+    for (const h of hazards) {
+      h.gateAxis = horizontal ? "x" : "y";
+      h.openLo = center - gap / 2;
+      h.openHi = center + gap / 2;
+      h.entry = horizontal ? (h.vy > 0 ? 0 : 2) : h.vx > 0 ? 3 : 1;
+      if (level) h.warning = 1.2;
+    }
+    if (level) {
+      const pair = hazards.map((h) => ({
+        ...h,
+        x: horizontal ? h.x : h.vx > 0 ? WIDTH + 26 : -26,
+        y: horizontal ? (h.vy > 0 ? HEIGHT + 26 : -26) : h.y,
+        vx: -h.vx,
+        vy: -h.vy,
+        entry: (h.entry + 2) % 4,
+      }));
+      hazards.push(...pair);
+      if (level >= 2 || game.wave % 2 === 0)
+        addCrossfire(
+          game,
+          horizontal
+            ? (level >= 2 ? game.wave : Math.floor(game.wave / 2)) % 2
+              ? 1
+              : 3
+            : (level >= 2 ? game.wave : Math.floor(game.wave / 2)) % 2
+              ? 0
+              : 2,
+          2,
+        );
     }
     return interval;
   }
@@ -241,7 +337,9 @@ export function clearanceTime(h) {
 export function spawnWave(game) {
   if (game.stageTime >= PATTERN_DURATION) return Infinity;
   const pending = [];
-  const interval = populateWave({ ...game, hazards: pending }) / PATTERN_TEMPO;
+  const interval =
+    populateWave({ ...game, liveHazards: game.hazards, hazards: pending }) /
+    PATTERN_TEMPO;
   // Five full seconds of launches, followed by natural clearance. Keep the
   // final wave complete instead of truncating its path to fit a deadline.
   for (const h of pending) h.life = clearanceTime(h);
