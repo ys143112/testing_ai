@@ -1,4 +1,5 @@
-import { WIDTH, HEIGHT, PATTERNS, PATTERN_TEMPO } from "./patterns.js";
+import { tangent, support } from "./geometry.js";
+import { WIDTH, HEIGHT, PATTERNS } from "./patterns.js";
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -16,6 +17,143 @@ export class Renderer {
   viewport() {
     const r = this.canvas.getBoundingClientRect();
     return { scale: Math.min(r.width / WIDTH, r.height / HEIGHT) };
+  }
+  drawLaser(c, h, warning) {
+    c.save();
+    c.translate(h.x, h.y);
+    c.rotate(h.angle);
+    c.fillStyle = h.color;
+    c.strokeStyle = h.color;
+    if (warning) {
+      const progress = Math.max(0, Math.min(1, h.age / h.warning)),
+        filled = h.halfH * progress;
+      c.globalAlpha = 0.16;
+      c.fillRect(-h.halfW, -h.halfH, h.halfW * 2, h.halfH * 2);
+      c.globalAlpha = 0.42;
+      c.fillRect(-h.halfW, -h.halfH, h.halfW * 2, filled);
+      c.fillRect(-h.halfW, h.halfH - filled, h.halfW * 2, filled);
+      c.globalAlpha = 0.9;
+      c.lineWidth = 2;
+      c.setLineDash([10, 7]);
+      c.strokeRect(-h.halfW, -h.halfH, h.halfW * 2, h.halfH * 2);
+      c.setLineDash([]);
+      c.strokeStyle = "#eadcff";
+      c.lineWidth = 2.5;
+      c.beginPath();
+      c.moveTo(-h.halfW, -h.halfH + filled);
+      c.lineTo(h.halfW, -h.halfH + filled);
+      c.moveTo(-h.halfW, h.halfH - filled);
+      c.lineTo(h.halfW, h.halfH - filled);
+      c.stroke();
+      c.restore();
+      c.save();
+      c.strokeStyle = h.color;
+      c.lineWidth = 3;
+      c.globalAlpha = 0.9;
+      c.beginPath();
+      c.arc(h.x, h.y, 24, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      c.stroke();
+      c.restore();
+    } else {
+      c.globalAlpha = 0.88;
+      c.shadowColor = h.color;
+      c.shadowBlur = this.reduced ? 0 : 14;
+      c.fillRect(-h.halfW, -h.halfH, h.halfW * 2, h.halfH * 2);
+      c.shadowBlur = 0;
+      c.fillStyle = "#f6eeff";
+      c.fillRect(-h.halfW, -1.5, h.halfW * 2, 3);
+      c.restore();
+    }
+  }
+  drawWall(c, h, warning) {
+    if (warning) {
+      if (!h.cue) return;
+      const n = h.gateNormal,
+        t = h.gateTangent,
+        S = support(n),
+        progress = h.age / h.warning;
+      c.strokeStyle = h.color;
+      c.fillStyle = h.color;
+      c.globalAlpha = 0.16 + progress * 0.12;
+      c.lineWidth = 2;
+      c.setLineDash([8, 7]);
+      for (const s of [h.openLo, h.openHi]) {
+        c.beginPath();
+        c.moveTo(WIDTH / 2 + t.x * s - n.x * S, HEIGHT / 2 + t.y * s - n.y * S);
+        c.lineTo(WIDTH / 2 + t.x * s + n.x * S, HEIGHT / 2 + t.y * s + n.y * S);
+        c.stroke();
+      }
+      c.setLineDash([]);
+      const x = WIDTH / 2 - n.x * (S - 30),
+        y = HEIGHT / 2 - n.y * (S - 30);
+      c.globalAlpha = 0.65 + progress * 0.35;
+      c.lineWidth = 3;
+      c.beginPath();
+      c.moveTo(x - n.x * 12, y - n.y * 12);
+      c.lineTo(x + n.x * 12, y + n.y * 12);
+      c.moveTo(
+        x + n.x * 12 - t.x * 8 - n.x * 8,
+        y + n.y * 12 - t.y * 8 - n.y * 8,
+      );
+      c.lineTo(x + n.x * 12, y + n.y * 12);
+      c.lineTo(
+        x + n.x * 12 + t.x * 8 - n.x * 8,
+        y + n.y * 12 + t.y * 8 - n.y * 8,
+      );
+      c.stroke();
+    } else {
+      c.translate(h.x, h.y);
+      c.rotate(h.angle);
+      c.fillStyle = h.color;
+      c.shadowColor = h.color;
+      c.shadowBlur = this.reduced ? 0 : 10;
+      c.fillRect(-h.halfW, -h.halfH, h.halfW * 2, h.halfH * 2);
+      c.shadowBlur = 0;
+      c.fillStyle = "#fff6";
+      c.fillRect(-h.halfW, -h.halfH, h.halfW * 2, 2);
+    }
+  }
+  drawCircle(c, h, warning) {
+    c.strokeStyle = h.color;
+    c.fillStyle = h.color;
+    if (warning) {
+      const x = Math.max(16, Math.min(WIDTH - 16, h.x)),
+        y = Math.max(16, Math.min(HEIGHT - 16, h.y)),
+        len = Math.hypot(h.vx, h.vy) || 1,
+        n = { x: h.vx / len, y: h.vy / len },
+        t = tangent(n);
+      c.globalAlpha = 0.45 + (0.45 * h.age) / h.warning;
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.arc(x, y, 15, 0, Math.PI * 2);
+      c.stroke();
+      c.lineWidth = 2;
+      c.beginPath();
+      c.moveTo(x - n.x * 7, y - n.y * 7);
+      c.lineTo(x + n.x * 8, y + n.y * 8);
+      c.moveTo(x + n.x * 3 - t.x * 5, y + n.y * 3 - t.y * 5);
+      c.lineTo(x + n.x * 8, y + n.y * 8);
+      c.lineTo(x + n.x * 3 + t.x * 5, y + n.y * 3 + t.y * 5);
+      c.stroke();
+    } else {
+      c.shadowColor = h.color;
+      c.shadowBlur = this.reduced ? 0 : 12;
+      c.globalAlpha = 0.22;
+      c.beginPath();
+      c.moveTo(h.x, h.y);
+      c.lineTo(h.x - h.vx * 0.15, h.y - h.vy * 0.15);
+      c.lineWidth = h.r;
+      c.stroke();
+      c.globalAlpha = 1;
+      c.beginPath();
+      c.arc(h.x, h.y, h.r, 0, Math.PI * 2);
+      c.fill();
+      c.shadowBlur = 0;
+      c.fillStyle = "#fff6";
+      c.beginPath();
+      c.arc(h.x - 2, h.y - 2, h.r * 0.35, 0, Math.PI * 2);
+      c.fill();
+    }
   }
   draw(game, clock) {
     const c = this.ctx,
@@ -75,75 +213,11 @@ export class Renderer {
     c.fillStyle = glow;
     c.fillRect(0, 0, WIDTH, HEIGHT);
     for (const h of game.hazards) {
-      const warning = h.age < h.warning;
       c.save();
-      c.strokeStyle = h.color;
-      c.fillStyle = h.color;
-      if (warning) {
-        c.globalAlpha = 0.35 + (0.35 * h.age) / h.warning;
-        c.setLineDash([5, 6]);
-        c.lineWidth = 1.5;
-        if (h.kind === "laser") {
-          c.fillStyle = `rgba(${parseInt(h.color.slice(1, 3), 16)},${parseInt(h.color.slice(3, 5), 16)},${parseInt(h.color.slice(5, 7), 16)},${0.06 + (0.12 * h.age) / h.warning})`;
-          c.fillRect(h.x, h.y, h.w, h.h);
-          c.strokeRect(h.x, h.y, h.w, h.h);
-          c.setLineDash([]);
-          c.fillStyle = h.color;
-          c.font = "15px monospace";
-          c.textAlign = "center";
-          c.fillText(
-            `${Math.max(0, (h.warning - h.age) / PATTERN_TEMPO).toFixed(1)}s`,
-            h.w < h.h ? h.x + h.w / 2 : WIDTH - 38,
-            h.w < h.h ? 38 : h.y + h.h / 2 + 5,
-          );
-        } else if (h.kind === "circle") {
-          const x = Math.max(14, Math.min(WIDTH - 14, h.x)),
-            y = Math.max(14, Math.min(HEIGHT - 14, h.y));
-          c.beginPath();
-          c.arc(x, y, 15, 0, Math.PI * 2);
-          c.stroke();
-        } else {
-          if (h.vy) {
-            c.beginPath();
-            c.moveTo(h.x, h.vy > 0 ? 14 : HEIGHT - 14);
-            c.lineTo(h.x + h.w, h.vy > 0 ? 14 : HEIGHT - 14);
-            c.stroke();
-          } else {
-            c.beginPath();
-            c.moveTo(h.vx > 0 ? 14 : WIDTH - 14, h.y);
-            c.lineTo(h.vx > 0 ? 14 : WIDTH - 14, h.y + h.h);
-            c.stroke();
-          }
-        }
-      } else {
-        c.shadowColor = h.color;
-        c.shadowBlur = this.reduced ? 0 : 12;
-        if (h.kind === "circle") {
-          c.globalAlpha = 0.22;
-          c.beginPath();
-          c.moveTo(h.x, h.y);
-          c.lineTo(h.x - h.vx * 0.15, h.y - h.vy * 0.15);
-          c.lineWidth = h.r;
-          c.stroke();
-          c.globalAlpha = 1;
-          c.beginPath();
-          c.arc(h.x, h.y, h.r, 0, Math.PI * 2);
-          c.fill();
-          c.fillStyle = "#fff6";
-          c.beginPath();
-          c.arc(h.x - 2, h.y - 2, h.r * 0.35, 0, Math.PI * 2);
-          c.fill();
-        } else {
-          c.globalAlpha = h.kind === "laser" ? 0.75 : 1;
-          c.fillRect(h.x, h.y, h.w, h.h);
-          c.shadowBlur = 0;
-          c.fillStyle = "#fff7";
-          if (h.kind === "laser") {
-            if (h.w < h.h) c.fillRect(h.x + h.w / 2 - 1, h.y, 2, h.h);
-            else c.fillRect(h.x, h.y + h.h / 2 - 1, h.w, 2);
-          } else c.fillRect(h.x, h.y, h.w, 2);
-        }
-      }
+      const warning = h.age < h.warning;
+      if (h.kind === "laser") this.drawLaser(c, h, warning);
+      else if (h.kind === "wall") this.drawWall(c, h, warning);
+      else this.drawCircle(c, h, warning);
       c.restore();
     }
     if (!this.reduced)

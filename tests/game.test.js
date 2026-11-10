@@ -1,3 +1,10 @@
+import {
+  safePolygon,
+  closestPoint,
+  project,
+  wallOutside,
+  support,
+} from "../src/geometry.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Game, PLAYER_SPEED } from "../src/game.js";
@@ -87,9 +94,9 @@ test("collision ends once, warning objects cannot kill, substeps prevent tunneli
       life: 2,
     },
   ];
-  advance(g, 0.45);
+  advance(g, 0.9 / PATTERN_TEMPO);
   assert.equal(g.state, "playing");
-  advance(g, 0.1);
+  advance(g, 0.2 / PATTERN_TEMPO);
   assert.equal(g.state, "over");
   g.end();
   assert.equal(count, 1);
@@ -157,8 +164,8 @@ test("five full seconds of attacks finish naturally, preview and then connect wi
         }
         if (e === "stage") {
           assert.equal(g.hazards.length, 0);
-          assert(g.time - stageStart >= 5);
-          assert(g.time - stageStart < 9);
+          assert(g.time - stageStart >= 5 - 1e-7);
+          assert(g.time - stageStart < 10);
           assert.equal(previews, stages + 1);
           assert(lastWave > 0);
           assert.equal(g.pattern, (previousPattern + 1) % 4);
@@ -179,7 +186,9 @@ test("five full seconds of attacks finish naturally, preview and then connect wi
             h.age >= h.life,
             "a live attack must not disappear at a boundary",
           );
-          if (h.kind !== "laser")
+          if (h.kind === "wall")
+            assert(wallOutside(h), "oriented wall must fully exit");
+          else if (h.kind !== "laser")
             assert(
               h.x + (h.r || h.w) < 0 ||
                 h.x - (h.r || 0) > 600 ||
@@ -233,7 +242,9 @@ test("next opening inherits exit lane and previous pattern fully finishes", () =
   assert.equal(g.hazards.length, 0);
   g.update(1 / 120);
   const [a, b] = g.hazards;
-  assert(Math.abs(a.vy ? (a.w + b.x) / 2 - 390 : (a.h + b.y) / 2 - 320) < 1);
+  assert(
+    Math.abs((a.openLo + a.openHi) / 2 - project(g.player, a.gateTangent)) < 1,
+  );
   assert(g.hazards.every((h) => h.age < h.warning));
 });
 test("seeded runs reproduce but fresh runs vary all four pattern families", () => {
@@ -265,44 +276,32 @@ test("seeded runs reproduce but fresh runs vary all four pattern families", () =
   g.start();
   assert.notEqual(JSON.stringify(g.plan), plan);
 });
-test("mixed gate directions change within every pattern and retain wide reachable openings", () => {
-  let minimum = 1,
-    maximum = 0;
-  for (let seed = 1; seed <= 200; seed++) {
+test("eight-direction gates preserve wide openings and safe geometry", () => {
+  for (let seed = 1; seed <= 100; seed++) {
     const g = new Game({ random: rng(seed) });
     g.start();
     g.pattern = 1;
     g.time = 35;
     g.stageTime = 0;
-    const entrances = new Set(),
-      previous = { x: null, y: null };
-    let lastEdge = null;
-    for (let w = 0; g.stageTime < 5; w++) {
+    const entries = new Set();
+    let previous = null;
+    for (let w = 0; w < 8; w++) {
       g.wave = w;
       g.hazards = [];
-      const interval = spawnWave(g),
-        [h] = g.hazards,
-        axis = h.gateAxis,
-        center = (h.openLo + h.openHi) / 2,
-        gap = h.openHi - h.openLo;
-      entrances.add(h.entry);
-      assert.notEqual(h.entry, lastEdge);
-      lastEdge = h.entry;
-      assert(gap >= 148 && gap <= 194);
-      assert(h.openLo >= 21.9 && h.openHi <= WIDTH - 21.9);
-      if (previous[axis] !== null)
-        assert(Math.abs(center - previous[axis]) <= 150 + 1e-8);
-      previous[axis] = center;
-      minimum = Math.min(minimum, center / WIDTH);
-      maximum = Math.max(maximum, center / WIDTH);
-      assert(g.hazards.every((h) => h.warning / PATTERN_TEMPO >= 0.75));
-      g.stageTime += interval;
+      spawnWave(g);
+      const h = g.hazards[0];
+      entries.add(h.entry);
+      assert.notEqual(h.entry, previous);
+      previous = h.entry;
+      assert(h.openHi - h.openLo >= 164);
+      assert(h.halfW > 0 && h.halfH > 0);
+      assert(h.warning / PATTERN_TEMPO >= 1);
+      assert(safePolygon(g.hazards, 42).length >= 3);
     }
-    assert.equal(entrances.size, 4);
+    assert.equal(entries.size, 8);
   }
-  assert(minimum < 0.22 && maximum > 0.78);
 });
-test("mixed crossing gates can be followed after 350ms reaction in the first two loops", () => {
+test("oriented crossing gates can be followed after 350ms reaction", () => {
   for (const stage of [1, 5])
     for (let seed = 1; seed <= 100; seed++) {
       const g = new Game({ random: rng(seed) });
@@ -315,28 +314,19 @@ test("mixed crossing gates can be followed after 350ms reaction in the first two
       let reaction = 1,
         target = null;
       const seen = new Set();
-      for (let f = 0; f < 120 * 9 && g.stage === stage; f++) {
-        if (g.hazards.some((h) => h.kind === "rect" && !seen.has(h))) {
+      for (let f = 0; f < 120 * 10 && g.stage === stage; f++) {
+        if (g.hazards.some((h) => h.kind === "wall" && !seen.has(h))) {
           g.hazards.forEach((h) => seen.add(h));
           reaction = 0;
         }
         reaction += 1 / 120;
-        if (reaction >= 0.35) {
-          target = { ...g.player };
-          for (const axis of ["x", "y"]) {
-            const walls = g.hazards.filter((h) => h.gateAxis === axis);
-            if (walls.length) {
-              const lo = Math.max(...walls.map((h) => h.openLo)) + 14,
-                hi = Math.min(...walls.map((h) => h.openHi)) - 14;
-              target[axis] = Math.max(lo, Math.min(hi, target[axis]));
-            }
-          }
-        }
+        if (reaction >= 0.35)
+          target = closestPoint(g.player, safePolygon(g.hazards, 14));
         g.update(1 / 120, target ? { target } : undefined);
         assert.equal(
           g.state,
           "playing",
-          `crossing gates trapped delayed player on stage ${stage}, seed ${seed}`,
+          `oriented gates trapped delayed player at stage ${stage}, seed ${seed}`,
         );
       }
     }
@@ -364,29 +354,25 @@ test("lasers allow a 350ms reaction, maintain warning floor and never stack wave
         if (laser) {
           shots++;
           assert(laser.warning / PATTERN_TEMPO >= LASER_MIN_WARNING);
-          assert(laser.warning / PATTERN_TEMPO <= 1.1);
+          assert(laser.warning / PATTERN_TEMPO <= 1.2);
         }
       }
       assert(g.hazards.length <= 1, "laser waves overlap");
       if (laser) {
         reaction += 1 / 120;
         if (reaction >= 0.35 && !target) {
-          const vertical = laser.h > laser.w,
-            min = vertical ? laser.x : laser.y,
-            max = min + (vertical ? laser.w : laser.h),
-            value = vertical ? g.player.x : g.player.y,
-            limit = vertical ? 600 : HEIGHT;
-          const left = min - 16,
-            right = max + 16;
-          const candidates = [left, right].filter(
-            (v) => v >= 12 && v <= limit - 12,
-          );
-          const exit = candidates.sort(
-            (a, b) => Math.abs(a - value) - Math.abs(b - value),
+          const candidates = [];
+          for (let x = 12; x <= WIDTH - 12; x += 24)
+            for (let y = 12; y <= HEIGHT - 12; y += 24) {
+              const candidate = { x, y, r: 7 };
+              if (!collides(candidate, laser, 16)) candidates.push(candidate);
+            }
+          target = candidates.sort(
+            (a, b) =>
+              Math.hypot(a.x - g.player.x, a.y - g.player.y) -
+              Math.hypot(b.x - g.player.x, b.y - g.player.y),
           )[0];
-          target = vertical
-            ? { x: exit, y: g.player.y }
-            : { x: g.player.x, y: exit };
+          assert(target);
         }
       }
       g.update(1 / 120, target ? { target } : undefined);
@@ -399,7 +385,7 @@ test("lasers allow a 350ms reaction, maintain warning floor and never stack wave
     assert(shots >= 3 && shots <= 4);
   }
 });
-test("obstacle motion and lifecycle use double tempo while player and score stay real-time", () => {
+test("obstacle motion and lifecycle use 1.5 tempo while player and score stay real-time", () => {
   const g = new Game();
   g.start();
   const h = {
@@ -415,15 +401,15 @@ test("obstacle motion and lifecycle use double tempo while player and score stay
   };
   g.hazards = [h];
   g.update(0.1, { x: 1 });
-  assert(Math.abs(h.x - 40) < 1e-8);
-  assert(Math.abs(h.age - 0.2) < 1e-8);
+  assert(Math.abs(h.x - (20 + 10 * PATTERN_TEMPO)) < 1e-8);
+  assert(Math.abs(h.age - 0.1 * PATTERN_TEMPO) < 1e-8);
   assert(Math.abs(g.time - 0.1) < 1e-8);
   assert(Math.abs(g.player.x - 325) < 1e-8);
   const initial = new Game();
   initial.start();
   const interval = spawnWave(initial);
-  assert(interval >= 0.54 && interval <= 0.66);
-  assert.equal(PATTERN_TEMPO, 2);
+  assert(interval >= 1.12 / PATTERN_TEMPO && interval <= 1.28 / PATTERN_TEMPO);
+  assert.equal(PATTERN_TEMPO, 1.5);
 });
 test("patterns leave gaps, telegraph danger and difficulty converges", () => {
   for (let phase = 0; phase < 4; phase++)
@@ -438,7 +424,7 @@ test("patterns leave gaps, telegraph danger and difficulty converges", () => {
       assert(g.hazards.every((h) => h.warning >= 0.5));
       if (phase === 1) {
         const [a, b] = g.hazards;
-        const gap = a.vy ? b.x - (a.x + a.w) : b.y - (a.y + a.h);
+        const gap = a.openHi - a.openLo;
         assert(gap >= 125);
       }
       if (phase === 2) assert.equal(g.hazards.length, 1);
@@ -446,7 +432,7 @@ test("patterns leave gaps, telegraph danger and difficulty converges", () => {
   assert(difficulty(200) > difficulty(20));
   assert(difficulty(1e6) <= 2.35);
 });
-test("both patterns mix four entrances from the first encounter without immediate repeats", () => {
+test("both patterns mix eight entrances from the first encounter without immediate repeats", () => {
   for (let stage of [0, 1, 4, 5, 8, 9])
     for (let seed = 1; seed <= 100; seed++) {
       const g = new Game({ random: rng(seed) });
@@ -457,7 +443,7 @@ test("both patterns mix four entrances from the first encounter without immediat
       g.stageTime = 0;
       const entries = new Set();
       let previous = null;
-      for (let wave = 0; wave < 4; wave++) {
+      for (let wave = 0; wave < 8; wave++) {
         g.wave = wave;
         g.hazards = [];
         spawnWave(g);
@@ -468,7 +454,7 @@ test("both patterns mix four entrances from the first encounter without immediat
         entries.add(edge);
         previous = edge;
       }
-      assert.equal(entries.size, 4);
+      assert.equal(entries.size, 8);
     }
 });
 test("stage five preserves broad lanes and introduces no bundled difficulty jump", () => {
@@ -509,14 +495,13 @@ test("stage five preserves broad lanes and introduces no bundled difficulty jump
   assert.equal(stageTuning(8).crossfireCount, 1);
   assert(stageTuning(16).singleLaneEvery >= 4);
   assert(
-    stageTuning(10000).speedScale <= 1.12 && stageTuning(10000).cadence <= 1.12,
+    stageTuning(10000).speedScale <= 1.22 && stageTuning(10000).cadence <= 1.22,
   );
 });
-test("perpendicular gate waves preserve a two-dimensional escape rectangle on every stage", () => {
+test("all eight wall orientations leave a common safe disc through every stage", () => {
   for (const stage of [1, 5, 9, 13, 401])
     for (let seed = 1; seed <= 60; seed++) {
-      const entries = new Set(),
-        g = new Game({ random: rng(seed) });
+      const g = new Game({ random: rng(seed) });
       g.start();
       g.stage = stage;
       g.pattern = 1;
@@ -524,25 +509,72 @@ test("perpendicular gate waves preserve a two-dimensional escape rectangle on ev
       g.spawnIn = 0;
       g.time = 35;
       g.end = () => {};
-      for (let f = 0; f < 9 * 120 && g.stage === stage; f++) {
+      for (let f = 0; f < 10 * 120 && g.stage === stage; f++) {
         g.update(1 / 120);
-        for (const axis of ["x", "y"]) {
-          const walls = g.hazards.filter((h) => h.gateAxis === axis);
-          if (walls.length) {
-            const lo = Math.max(...walls.map((h) => h.openLo)),
-              hi = Math.min(...walls.map((h) => h.openHi));
-            assert(
-              hi - lo >= stageTuning(stage).gateClearance - 1e-8,
-              `pinch trap stage ${stage} seed ${seed} axis ${axis}`,
-            );
-          }
-        }
-        g.hazards
-          .filter((h) => !h.crossfire)
-          .forEach((h) => entries.add(h.entry));
+        const poly = safePolygon(
+          g.hazards,
+          stageTuning(stage).gateClearance / 2,
+        );
+        assert(
+          poly.length >= 3,
+          `empty safe disc at stage ${stage}, seed ${seed}`,
+        );
+        const centre = closestPoint({ x: 300, y: 300 }, poly);
+        for (const h of g.hazards.filter((h) => h.kind === "wall"))
+          assert(
+            !collides(
+              { ...centre, r: stageTuning(stage).gateClearance / 2 - 1e-5 },
+              h,
+            ),
+          );
       }
-      assert.equal(entries.size, 4);
     }
+});
+test("wide lasers always lock onto the player, do not track, and include diagonal orientations", () => {
+  const angles = new Set();
+  for (let seed = 1; seed <= 100; seed++) {
+    const g = new Game({ random: rng(seed) });
+    g.start();
+    g.pattern = 2;
+    g.stageTime = 0;
+    g.player.x = 12 + (seed % 3) * 288;
+    g.player.y = 12 + (seed % 4) * 180;
+    spawnWave(g);
+    const h = g.hazards[0],
+      locked = { x: h.x, y: h.y };
+    angles.add(h.angle);
+    assert(h.halfH * 2 >= 82);
+    assert(collides(g.player, h));
+    assert.deepEqual(h.target, { x: g.player.x, y: g.player.y });
+    g.player.x = 300;
+    g.player.y = 300;
+    g.spawnIn = Infinity;
+    g.update(0.1);
+    assert.equal(h.x, locked.x);
+    assert.equal(h.y, locked.y);
+    assert.equal(g.state, "playing");
+  }
+  assert.equal(angles.size, 4);
+});
+test("rotated rectangle collision follows visual edges, including corner misses", () => {
+  const h = {
+    kind: "wall",
+    x: 300,
+    y: 300,
+    halfW: 100,
+    halfH: 10,
+    angle: Math.PI / 4,
+  };
+  const c = Math.SQRT1_2;
+  assert(collides({ x: 300 + c * 50, y: 300 + c * 50, r: 7 }, h));
+  assert(!collides({ x: 300 - c * 30, y: 300 + c * 30, r: 7 }, h));
+  assert(collides({ x: 300 - c * 17, y: 300 + c * 17, r: 7 }, h));
+  assert(
+    !collides(
+      { x: 300 + c * 112 - c * 22, y: 300 + c * 112 + c * 22, r: 7 },
+      h,
+    ),
+  );
 });
 test("cycle progression survives 4 to 1, resets on retry, and never reduces laser warning", () => {
   const g = new Game({ random: rng(5) });

@@ -37,14 +37,12 @@ async function waitServer() {
     if (m.type() === "error") errors.push(m.text());
   });
   async function squareCanvas(page) {
-    const size = await page
-      .locator("canvas")
-      .evaluate((c) => ({
-        w: c.getBoundingClientRect().width,
-        h: c.getBoundingClientRect().height,
-        bw: c.width,
-        bh: c.height,
-      }));
+    const size = await page.locator("canvas").evaluate((c) => ({
+      w: c.getBoundingClientRect().width,
+      h: c.getBoundingClientRect().height,
+      bw: c.width,
+      bh: c.height,
+    }));
     assert(Math.abs(size.w - size.h) < 1, "display must be square");
     assert.equal(size.bw, size.bh);
   }
@@ -126,6 +124,79 @@ async function waitServer() {
     "true",
   );
   await page.getByRole("button", { name: "소리 끄기" }).click();
+  // Exercise real diagonal beam rendering, including charge visibility and
+  // the absence of small numeric countdown labels.
+  await page.evaluate(async () => {
+    const entry = document.querySelector("script[type=module]").src;
+    const { Game } = await import(new URL("game.js", entry).href),
+      { Renderer } = await import(new URL("render.js", entry).href);
+    const canvas = document.createElement("canvas");
+    canvas.id = "beam-preview";
+    canvas.style.cssText =
+      "position:fixed;left:20px;top:20px;width:500px;height:500px;z-index:9999";
+    document.body.append(canvas);
+    const renderer = new Renderer(canvas),
+      game = new Game();
+    game.start();
+    game.player = { x: 480, y: 450, r: 7 };
+    game.pattern = 2;
+    const beam = {
+      kind: "laser",
+      x: 300,
+      y: 300,
+      halfW: 850,
+      halfH: 48,
+      angle: Math.PI / 4,
+      vx: 0,
+      vy: 0,
+      age: 0.15,
+      warning: 1.65,
+      life: 2.2,
+      color: "#c39cff",
+    };
+    game.hazards = [beam];
+    const labels = [],
+      original = renderer.ctx.fillText;
+    renderer.ctx.fillText = function (...args) {
+      labels.push(args[0]);
+      return original.apply(this, args);
+    };
+    window.__beamPreview = { canvas, renderer, game, beam, labels };
+    renderer.draw(game, 0);
+  });
+  const sampleBeam = () =>
+    page.evaluate(() => {
+      const { canvas, renderer } = window.__beamPreview,
+        q = Math.SQRT1_2,
+        x = Math.round(((300 - q * 30) * canvas.width) / 600),
+        y = Math.round(((300 + q * 30) * canvas.height) / 600),
+        p = renderer.ctx.getImageData(x, y, 1, 1).data;
+      return p[0] + p[2];
+    });
+  const early = await sampleBeam();
+  await page.evaluate(() => {
+    const v = window.__beamPreview;
+    v.beam.age = v.beam.warning * 0.8;
+    v.renderer.draw(v.game, 0);
+  });
+  const charged = await sampleBeam();
+  assert(charged > early + 30, "charging band must become visibly filled");
+  assert.deepEqual(await page.evaluate(() => window.__beamPreview.labels), []);
+  await page
+    .locator("#beam-preview")
+    .screenshot({ path: "test-results/laser-charge.png" });
+  await page.evaluate(() => {
+    const v = window.__beamPreview;
+    v.beam.age = v.beam.warning + 0.1;
+    v.renderer.draw(v.game, 0);
+  });
+  await page
+    .locator("#beam-preview")
+    .screenshot({ path: "test-results/laser-fire.png" });
+  await page.evaluate(() => {
+    window.__beamPreview.canvas.remove();
+    delete window.__beamPreview;
+  });
   // Denied storage must still boot and start.
   const denied = await browser.newPage();
   await denied.addInitScript(() => {

@@ -1,8 +1,17 @@
+import {
+  DIRECTIONS,
+  tangent,
+  support,
+  project,
+  entryPoint,
+  safePolygon,
+  closestPoint,
+} from "./geometry.js";
 import { clamp } from "./collision.js";
 export const WIDTH = 600,
   HEIGHT = 600;
 export const PATTERN_DURATION = 5,
-  PATTERN_TEMPO = 2;
+  PATTERN_TEMPO = 1.5;
 export const PATTERNS = [
   {
     name: "유성우",
@@ -21,7 +30,7 @@ export function difficulty(time) {
   return 1 + 1.35 * (1 - Math.exp((-time * PATTERN_TEMPO) / 100));
 }
 export const cycleLevel = (stage) => Math.min(3, Math.floor(stage / 4));
-export const LASER_MIN_WARNING = 0.9;
+export const LASER_MIN_WARNING = 1.05;
 // Continuous small increments. Stage 5 no longer switches several rules on at once.
 export function stageTuning(stage) {
   const progress = 1 - Math.exp(-Math.max(0, stage) / 18);
@@ -38,6 +47,12 @@ export function stageTuning(stage) {
 export function createPatternPlan(random, route) {
   return {
     edges: [],
+    flowStart: Math.floor(random() * 8),
+    flowTurn: random() < 0.5 ? -1 : 1,
+    gateAnchor: null,
+    gateGoal: { x: 130 + random() * 340, y: 130 + random() * 340 },
+    laserAngles: [],
+    lastLaserAngle: null,
     lastEdge: null,
     rainLanes: {
       x: clamp(Math.round(route.x * 5), 1, 4),
@@ -56,26 +71,32 @@ export function createPatternPlan(random, route) {
 }
 function nextEdge(plan, random) {
   if (!plan.edges.length) {
-    plan.edges = [0, 1, 2, 3];
-    for (let i = 3; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [plan.edges[i], plan.edges[j]] = [plan.edges[j], plan.edges[i]];
-    }
+    const groups = [
+      [0, 2, 4, 6],
+      [1, 3, 5, 7],
+    ];
+    for (const group of groups)
+      for (let i = 3; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [group[i], group[j]] = [group[j], group[i]];
+      }
+    const first = random() < 0.5 ? 0 : 1;
+    plan.edges = Array.from(
+      { length: 8 },
+      (_, i) => groups[(i + first) % 2][Math.floor(i / 2)],
+    );
     if (plan.edges[0] === plan.lastEdge)
       [plan.edges[0], plan.edges[1]] = [plan.edges[1], plan.edges[0]];
   }
   return (plan.lastEdge = plan.edges.shift());
 }
 function source(edge, across, margin = 24) {
-  return {
-    x: edge === 1 ? WIDTH + margin : edge === 3 ? -margin : across,
-    y: edge === 0 ? -margin : edge === 2 ? HEIGHT + margin : across,
-  };
+  return entryPoint(edge, across - WIDTH / 2, margin);
 }
 function addCrossfire(game, edge, count) {
   const { random: r, player: p, hazards } = game;
   const across = clamp(
-    (edge % 2 ? p.y : p.x) + (r() - 0.5) * 150,
+    project(p, tangent(DIRECTIONS[edge])) + WIDTH / 2 + (r() - 0.5) * 150,
     65,
     WIDTH - 65,
   );
@@ -103,31 +124,46 @@ function addCrossfire(game, edge, count) {
 function rain(game, tuning) {
   const { random: r, plan, hazards } = game,
     d = difficulty(game.time),
-    edge = nextEdge(plan, r),
-    axis = edge % 2 ? "y" : "x";
+    edge =
+      game.stage >= 4 && Math.floor(game.stage / 4) % 3 === 1
+        ? (plan.flowStart + game.wave * plan.flowTurn + 80) % 8
+        : nextEdge(plan, r),
+    n = DIRECTIONS[edge],
+    t = tangent(n),
+    axis = edge % 4,
+    laneKey =
+      edge % 2 ? "diagonal" + axis : edge === 0 || edge === 4 ? "x" : "y";
+  if (plan.rainLanes[laneKey] === undefined)
+    plan.rainLanes[laneKey] = clamp(
+      Math.round((project(game.player, t) / support(t) + 1) * 2.5),
+      1,
+      4,
+    );
   if (game.wave > 0 && r() < 0.25)
-    plan.rainLanes[axis] = clamp(
-      plan.rainLanes[axis] + (r() < 0.5 ? -1 : 1),
+    plan.rainLanes[laneKey] = clamp(
+      plan.rainLanes[laneKey] + (r() < 0.5 ? -1 : 1),
       1,
       4,
     );
   if (game.wave > 0 && r() < 0.25) plan.rainDirection *= -1;
-  const gap = plan.rainLanes[axis],
+  const gap = plan.rainLanes[laneKey],
     single = (game.wave + 1) % tuning.singleLaneEvery === 0;
-  const speed = (105 + d * 30) * (0.96 + r() * 0.08) * tuning.speedScale;
+  const speed =
+    ((105 + d * 30) * (0.96 + r() * 0.08) * tuning.speedScale * support(n)) /
+    (WIDTH / 2);
   const drift = plan.rainDirection * (15 + r() * 10);
   for (let i = 0; i < 6; i++) {
     if (i === gap || (!single && (i + 1) % 6 === gap)) continue;
-    const across = ((i + 0.25 + r() * 0.45) * WIDTH) / 6,
-      { x, y } = source(edge, across),
+    const across = (((i + 0.25 + r() * 0.45) / 6) * 2 - 1) * support(t),
+      { x, y } = entryPoint(edge, across),
       sideways = drift + (r() - 0.5) * 8;
     hazards.push({
       kind: "circle",
       x,
       y,
       r: 9 + r() * 4,
-      vx: edge === 1 ? -speed : edge === 3 ? speed : sideways,
-      vy: edge === 0 ? speed : edge === 2 ? -speed : sideways,
+      vx: n.x * speed + t.x * sideways,
+      vy: n.y * speed + t.y * sideways,
       age: 0,
       warning: 1.3,
       life: 8,
@@ -136,7 +172,7 @@ function rain(game, tuning) {
     });
   }
   if ((game.wave + 1) % tuning.crossfireEvery === 0)
-    addCrossfire(game, (edge + 1) % 4, tuning.crossfireCount);
+    addCrossfire(game, (edge + 2) % 8, tuning.crossfireCount);
   return Math.max(
     0.82,
     ((1.2 / Math.sqrt(d)) * (0.94 + r() * 0.12)) / tuning.cadence,
@@ -145,159 +181,136 @@ function rain(game, tuning) {
 function gates(game, tuning) {
   const { random: r, plan, hazards, player: p } = game,
     d = difficulty(game.time),
-    edge = nextEdge(plan, r);
-  const horizontal = edge % 2 === 0,
-    axis = horizontal ? "x" : "y",
-    span = horizontal ? WIDTH : HEIGHT;
+    edge = nextEdge(plan, r),
+    n = DIRECTIONS[edge],
+    t = tangent(n);
   const gap = Math.max(
-    148,
-    194 - (d - 1) * 8 - r() * 18 - (tuning.speedScale - 1) * 160,
+    164,
+    202 - (d - 1) * 8 - r() * 16 - (tuning.speedScale - 1) * 120,
   );
   const interval = Math.max(
     1.8,
     ((2.45 / Math.sqrt(d)) * (0.95 + r() * 0.1)) / tuning.cadence,
   );
-  const margin = gap / 2 + 22;
-  let center = plan.gateCenters[axis];
-  if (center === null) center = horizontal ? p.x : p.y;
-  else {
-    const elapsed = Math.max(
-      interval / PATTERN_TEMPO,
-      game.stageTime - plan.gateTimes[axis],
-    );
-    center +=
-      plan.gateDirections[axis] *
-      Math.min(150, 250 * elapsed * 0.45) *
-      (0.85 + r() * 0.15);
+  const radius = tuning.gateClearance / 2;
+  const poly = safePolygon(game.liveHazards || [], radius);
+  let anchor = plan.gateAnchor || { x: p.x, y: p.y };
+  if (game.stage >= 5 && game.wave)
+    plan.gateGoal = {
+      x: WIDTH / 2 + 140 * Math.cos(plan.fanPhase + game.wave * 0.65),
+      y: HEIGHT / 2 + 140 * Math.sin(plan.fanPhase + game.wave * 0.65),
+    };
+  if (game.wave) {
+    const dx = plan.gateGoal.x - anchor.x,
+      dy = plan.gateGoal.y - anchor.y,
+      len = Math.hypot(dx, dy);
+    if (len < 30) plan.gateGoal = { x: 110 + r() * 380, y: 110 + r() * 380 };
+    else {
+      const step = Math.min(65, len);
+      anchor = {
+        x: anchor.x + (dx / len) * step,
+        y: anchor.y + (dy / len) * step,
+      };
+    }
   }
-  center = clamp(center, margin, span - margin);
-  // Independent X/Y intersections form a shared safe rectangle, even when
-  // perpendicular and opposing walls are simultaneously on screen.
-  const live = (game.liveHazards || []).filter((h) => h.gateAxis === axis);
-  if (live.length) {
-    const lo = Math.max(...live.map((h) => h.openLo)),
-      hi = Math.min(...live.map((h) => h.openHi));
-    center = clamp(
-      center,
-      lo + tuning.gateClearance - gap / 2,
-      hi - tuning.gateClearance + gap / 2,
-    );
+  anchor = closestPoint(anchor, poly);
+  plan.gateAnchor = anchor;
+  const span = support(t) + 30,
+    center = project(anchor, t),
+    lo = center - gap / 2,
+    hi = center + gap / 2;
+  const speed = ((120 + 24 * d) * tuning.speedScale * support(n)) / (WIDTH / 2);
+  const plane = -support(n) - 26,
+    angle = Math.atan2(t.y, t.x);
+  for (const [a, b] of [
+    [-span, lo],
+    [hi, span],
+  ]) {
+    const across = (a + b) / 2;
+    hazards.push({
+      kind: "wall",
+      x: WIDTH / 2 + n.x * plane + t.x * across,
+      y: HEIGHT / 2 + n.y * plane + t.y * across,
+      halfW: (b - a) / 2,
+      halfH: 8.5,
+      angle,
+      vx: n.x * speed,
+      vy: n.y * speed,
+      age: 0,
+      warning: PATTERN_TEMPO,
+      life: 8,
+      color: PATTERNS[1].color,
+      entry: edge,
+      gateAxis: edge % 4,
+      gateNormal: n,
+      gateTangent: t,
+      openLo: lo,
+      openHi: hi,
+      cue: a === -span,
+    });
   }
-  if (center <= margin + 1 || center >= span - margin - 1)
-    plan.gateDirections[axis] *= -1;
-  plan.gateCenters[axis] = center;
-  plan.gateTimes[axis] = game.stageTime;
-  const speed = (120 + 24 * d) * tuning.speedScale,
-    reverse = edge === 1 || edge === 2;
-  const start = source(edge, 0, 26),
-    velocity = reverse ? -speed : speed;
-  const common = {
-    kind: "rect",
-    age: 0,
-    warning: 1.5,
-    life: 8,
-    color: PATTERNS[1].color,
-    entry: edge,
-    gateAxis: axis,
-    openLo: center - gap / 2,
-    openHi: center + gap / 2,
-  };
-  if (horizontal) {
-    hazards.push(
-      {
-        ...common,
-        x: 0,
-        y: start.y,
-        w: center - gap / 2,
-        h: 17,
-        vx: 0,
-        vy: velocity,
-      },
-      {
-        ...common,
-        x: center + gap / 2,
-        y: start.y,
-        w: WIDTH - center - gap / 2,
-        h: 17,
-        vx: 0,
-        vy: velocity,
-      },
-    );
-  } else {
-    hazards.push(
-      {
-        ...common,
-        x: start.x,
-        y: 0,
-        w: 17,
-        h: center - gap / 2,
-        vx: velocity,
-        vy: 0,
-      },
-      {
-        ...common,
-        x: start.x,
-        y: center + gap / 2,
-        w: 17,
-        h: HEIGHT - center - gap / 2,
-        vx: velocity,
-        vy: 0,
-      },
-    );
-  }
-  // One sparse new layer later in the run, never an extra mirrored wall pair.
   if (game.stage >= 13 && (game.wave + 1) % tuning.crossfireEvery === 0)
-    addCrossfire(game, (edge + 1) % 4, 1);
+    addCrossfire(game, (edge + 2) % 8, 1);
   return interval;
 }
 function lasers(game) {
   const { random: r, plan, player: p, hazards } = game,
     d = difficulty(game.time);
-  const vertical =
-    game.wave === 0
-      ? plan.laserVertical
-      : plan.laserRepeats >= 2
-        ? !plan.laserVertical
-        : r() < 0.5;
-  plan.laserRepeats =
-    vertical === plan.laserVertical ? plan.laserRepeats + 1 : 1;
-  plan.laserVertical = vertical;
-  const size = 32 + r() * 14 + (d - 1) * 4,
-    range = vertical ? WIDTH : HEIGHT;
-  const aim = r() < 0.75 ? (vertical ? p.x : p.y) : range * (0.15 + r() * 0.7),
-    target = clamp(aim, size / 2 + 12, range - size / 2 - 12);
-  const warningSeconds = LASER_MIN_WARNING + r() * 0.2,
-    activeSeconds = 0.26 + r() * 0.06;
+  if (!plan.laserAngles.length) {
+    plan.laserAngles = [0, 1, 2, 3];
+    for (let i = 3; i > 0; i--) {
+      const j = Math.floor(r() * (i + 1));
+      [plan.laserAngles[i], plan.laserAngles[j]] = [
+        plan.laserAngles[j],
+        plan.laserAngles[i],
+      ];
+    }
+    if (plan.laserAngles[0] === plan.lastLaserAngle)
+      [plan.laserAngles[0], plan.laserAngles[1]] = [
+        plan.laserAngles[1],
+        plan.laserAngles[0],
+      ];
+  }
+  const index = plan.laserAngles.shift();
+  plan.lastLaserAngle = index;
+  const size = 82 + r() * 18 + (d - 1) * 6,
+    warningSeconds = LASER_MIN_WARNING + r() * 0.15,
+    activeSeconds = 0.3 + r() * 0.06;
   hazards.push({
     kind: "laser",
-    x: vertical ? target - size / 2 : 0,
-    y: vertical ? 0 : target - size / 2,
-    w: vertical ? size : WIDTH,
-    h: vertical ? HEIGHT : size,
+    x: p.x,
+    y: p.y,
+    halfW: WIDTH * Math.SQRT2,
+    halfH: size / 2,
+    angle: (index * Math.PI) / 4,
     vx: 0,
     vy: 0,
     age: 0,
     warning: warningSeconds * PATTERN_TEMPO,
     life: (warningSeconds + activeSeconds) * PATTERN_TEMPO,
     color: PATTERNS[2].color,
+    target: { x: p.x, y: p.y },
   });
-  return (warningSeconds + activeSeconds + 0.2 + r() * 0.12) * PATTERN_TEMPO;
+  return (warningSeconds + activeSeconds + 0.22 + r() * 0.12) * PATTERN_TEMPO;
 }
 function fan(game, tuning) {
   const { random: r, plan, route, player: p, hazards } = game,
     d = difficulty(game.time);
-  const left = game.wave % 2 === 0 ? plan.fanLeft : !plan.fanLeft,
-    x = left ? 0 : WIDTH;
-  const y =
-    HEIGHT *
-    clamp(
-      route.y +
-        Math.sin(plan.fanPhase + game.wave * 0.8) * plan.fanAmplitude +
-        (r() - 0.5) * 0.08,
-      0.16,
-      0.84,
-    );
-  const direction = Math.atan2(HEIGHT / 2 - y, left ? WIDTH : -WIDTH),
+  const edge =
+      game.stage >= 7 && game.wave % 2 === 1
+        ? (plan.lastEdge + 4) % 8
+        : nextEdge(plan, r),
+    n = DIRECTIONS[edge],
+    t = tangent(n);
+  const across =
+    project({ x: WIDTH * route.x, y: HEIGHT * route.y }, t) +
+    Math.sin(plan.fanPhase + game.wave * 0.8) * WIDTH * plan.fanAmplitude;
+  const { x, y } = entryPoint(
+    edge,
+    clamp(across, -support(t) * 0.7, support(t) * 0.7),
+    12,
+  );
+  const direction = Math.atan2(HEIGHT / 2 - y, WIDTH / 2 - x),
     count = 7 + Math.floor(d),
     speed = (105 + 30 * d) * (0.94 + r() * 0.12) * tuning.speedScale;
   const gapIndex = clamp(
@@ -323,12 +336,19 @@ function fan(game, tuning) {
       warning: 0.85,
       life: 8,
       color: PATTERNS[3].color,
+      entry: edge,
     });
   }
   return ((2.1 / Math.sqrt(d)) * (0.9 + r() * 0.2)) / tuning.cadence;
 }
 export function clearanceTime(h) {
   if (h.kind === "laser") return h.life;
+  if (h.kind === "wall")
+    return (
+      h.warning +
+      (support(h.gateNormal) + h.halfH + 24 - project(h, h.gateNormal)) /
+        Math.hypot(h.vx, h.vy)
+    );
   const margin = 24,
     right = h.kind === "circle" ? h.r : 0,
     left = h.kind === "circle" ? h.r : h.w,
