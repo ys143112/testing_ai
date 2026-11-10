@@ -221,21 +221,23 @@ async function waitServer() {
   assert(await paced.locator("#overlay").isHidden());
   await paced.close();
   // Verify project subdirectory paths using a parent-root static server.
+  const siteRoot = path.resolve(process.env.SERVE_DIR || ".");
+  const prefixUrl = `http://127.0.0.1:4179/${path.basename(siteRoot)}/`;
   const prefix = spawn(process.execPath, [path.resolve("scripts/serve.js")], {
-    cwd: path.resolve(".."),
-    env: { ...process.env, PORT: "4179" },
+    cwd: path.dirname(siteRoot),
+    env: { ...process.env, PORT: "4179", SERVE_DIR: path.dirname(siteRoot) },
     stdio: "pipe",
   });
   try {
     for (let i = 0; i < 40; i++) {
       try {
-        if ((await fetch("http://127.0.0.1:4179/testing_ai/")).ok) break;
+        if ((await fetch(prefixUrl)).ok) break;
       } catch {}
       await new Promise((r) => setTimeout(r, 100));
     }
     const sub = await browser.newPage();
     sub.on("pageerror", (e) => errors.push(e.message));
-    await sub.goto("http://127.0.0.1:4179/testing_ai/");
+    await sub.goto(prefixUrl);
     await sub.getByRole("button", { name: "살아남기" }).click();
     assert(await sub.locator("#overlay").isHidden());
     await sub.close();

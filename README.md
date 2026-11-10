@@ -55,3 +55,5 @@ SERVE_DIR=dist npm start
 Repository Settings → Pages → Source를 **GitHub Actions**로 선택해야 합니다. 환경 보호 규칙이 있으면 배포 승인이 필요할 수 있습니다. 배포 주소는 Actions의 Deploy 결과에서 확인하세요. 이 레포지토리의 기본 주소는 https://ys143112.github.io/testing_ai/ 입니다.
 
 CSS, 모듈, favicon은 모두 상대 경로이므로 프로젝트 하위 경로에서도 동작합니다. `dist/`에는 게임 파일만 포함되며 서버나 비밀 키가 필요하지 않습니다.
+
+배포 빌드는 모든 JavaScript 모듈과 CSS를 내용 해시가 포함된 경로에 배치합니다. 하위 모듈 하나만 수정해도 전체 모듈 경로가 바뀌어 이전 캐시와 섞이지 않습니다. GitHub Pages는 HTML 자체를 최대 10분 캐시할 수 있으므로 즉시 확인할 때는 `?v=<dist/version.json의 version>`을 주소에 붙이세요. Actions 브라우저 테스트는 실제 `dist/` 산출물을 검사합니다.
