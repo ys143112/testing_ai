@@ -1,5 +1,5 @@
 import { Game } from "./game.js";
-import { WIDTH, HEIGHT, PATTERNS } from "./patterns.js";
+import { WIDTH, HEIGHT, PATTERNS, PATTERN_DURATION } from "./patterns.js";
 import { Renderer } from "./render.js";
 import { Audio } from "./audio.js";
 import {
@@ -242,7 +242,8 @@ function frame(timestamp) {
   $("best").innerHTML = `${formatTime(best)}<small>s</small>`;
   $("stage").textContent = `STAGE ${String(game.stage + 1).padStart(2, "0")}`;
   $("pattern").textContent = PATTERNS[game.pattern].name;
-  $("progress").style.width = `${(game.time % 10) * 10}%`;
+  $("progress").style.width =
+    `${Math.min(1, game.stageTime / PATTERN_DURATION) * 100}%`;
   $("announcement").classList.toggle(
     "visible",
     game.state === "playing" && game.time < announcementUntil,

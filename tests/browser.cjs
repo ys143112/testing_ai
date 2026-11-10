@@ -204,6 +204,22 @@ async function waitServer() {
   await mp.clock.runFor(50);
   await mp.locator("#overlay").waitFor({ state: "visible" });
   assert(await mp.locator("#overlay").isVisible());
+  // Deterministic center opening lets the real app reach its first transition.
+  const paced = await browser.newPage();
+  paced.on("pageerror", (e) => errors.push(e.message));
+  await paced.addInitScript(() => {
+    Math.random = () => 0.5;
+  });
+  await paced.clock.install();
+  await paced.goto(url);
+  await paced.getByRole("button", { name: "살아남기" }).click();
+  await paced.clock.runFor(4800);
+  assert.equal(await paced.locator("#stage").textContent(), "STAGE 01");
+  await paced.clock.runFor(300);
+  assert.equal(await paced.locator("#stage").textContent(), "STAGE 02");
+  assert.equal(await paced.locator("#pattern").textContent(), "틈새 비행");
+  assert(await paced.locator("#overlay").isHidden());
+  await paced.close();
   // Verify project subdirectory paths using a parent-root static server.
   const prefix = spawn(process.execPath, [path.resolve("scripts/serve.js")], {
     cwd: path.resolve(".."),
@@ -228,7 +244,7 @@ async function waitServer() {
   }
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: browser start, keyboard, pause/resume, blur, hidden tab, resize, real collision, restart, best reload, sound, blocked storage, mobile touch, DPR and subdirectory.",
+    "PASS: browser start, keyboard, pause/resume, blur, hidden tab, resize, real collision, restart, best reload, sound, blocked storage, mobile touch, five-second transition, DPR and subdirectory.",
   );
 })()
   .catch((e) => {

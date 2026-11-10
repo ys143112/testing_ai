@@ -1,5 +1,11 @@
 import { clamp, collides } from "./collision.js";
-import { WIDTH, HEIGHT, spawnWave } from "./patterns.js";
+import {
+  WIDTH,
+  HEIGHT,
+  PATTERN_DURATION,
+  PATTERN_TEMPO,
+  spawnWave,
+} from "./patterns.js";
 export const PLAYER_SPEED = 250;
 export class Game {
   constructor({ random = Math.random, onEvent = () => {} } = {}) {
@@ -11,6 +17,7 @@ export class Game {
   reset() {
     this.time = 0;
     this.stage = 0;
+    this.stageTime = 0;
     this.pattern = 0;
     this.wave = 0;
     this.spawnIn = 2;
@@ -83,12 +90,17 @@ export class Game {
     this.particles = this.particles.filter((p) => p.life > 0);
     if (this.state !== "playing") return;
     this.time += dt;
-    const stage = Math.floor((this.time + 1e-8) / 10);
-    if (stage !== this.stage) {
-      this.stage = stage;
-      this.pattern = stage % 4;
-      this.hazards = [];
-      this.spawnIn = 0.9;
+    this.stageTime += dt;
+    // Never cut off a live wave. Normal waves are budgeted to clear before 5s;
+    // this guard also handles delayed cleanup without overlapping patterns.
+    if (
+      this.stageTime + 1e-8 >= PATTERN_DURATION &&
+      this.hazards.length === 0
+    ) {
+      this.stage++;
+      this.stageTime = 0;
+      this.pattern = this.stage % 4;
+      this.spawnIn = 0;
       this.wave = 0;
       this.burst(this.player.x, this.player.y, "#89f9c4", 12);
       this.onEvent("stage");
@@ -117,15 +129,18 @@ export class Game {
     this.trail.push({ x: p.x, y: p.y });
     if (this.trail.length > 18) this.trail.shift();
     this.spawnIn -= dt;
-    if (this.spawnIn <= 0) {
+    if (this.spawnIn <= 0 && this.stageTime < PATTERN_DURATION) {
       this.spawnIn = spawnWave(this);
       this.wave++;
     }
     for (const h of this.hazards) {
-      h.age += dt;
+      h.age += dt * PATTERN_TEMPO;
       if (h.age < h.warning) continue;
-      h.x += h.vx * dt;
-      h.y += h.vy * dt;
+      h.x += h.vx * dt * PATTERN_TEMPO;
+      h.y += h.vy * dt * PATTERN_TEMPO;
+    }
+    for (const h of this.hazards) {
+      if (h.age < h.warning || h.age >= h.life) continue;
       if (collides(p, h)) {
         this.end();
         break;
@@ -137,13 +152,6 @@ export class Game {
         this.onEvent("graze");
       }
     }
-    this.hazards = this.hazards.filter(
-      (h) =>
-        h.age < h.life &&
-        h.x > -150 &&
-        h.y > -150 &&
-        h.x < WIDTH + 150 &&
-        h.y < HEIGHT + 150,
-    );
+    this.hazards = this.hazards.filter((h) => h.age < h.life);
   }
 }

@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Game, PLAYER_SPEED } from "../src/game.js";
 import { collides, circleRect } from "../src/collision.js";
-import { spawnWave, difficulty } from "../src/patterns.js";
+import {
+  spawnWave,
+  difficulty,
+  PATTERN_DURATION,
+  PATTERN_TEMPO,
+} from "../src/patterns.js";
 import { readBest, saveBest, formatTime } from "../src/storage.js";
 function rng(seed = 1) {
   return () => {
@@ -77,9 +82,9 @@ test("collision ends once, warning objects cannot kill, substeps prevent tunneli
       life: 2,
     },
   ];
-  advance(g, 0.9);
+  advance(g, 0.45);
   assert.equal(g.state, "playing");
-  advance(g, 0.2);
+  advance(g, 0.1);
   assert.equal(g.state, "over");
   g.end();
   assert.equal(count, 1);
@@ -124,32 +129,106 @@ test("pause / resume exclude hidden time; restart removes all previous run state
   assert.equal(g.nearMisses, 0);
   assert.equal(g.spawnIn, 2);
 });
-test("every ten seconds transitions, removes old hazards and gives grace", () => {
-  const events = [];
-  const g = new Game({ onEvent: (e) => events.push(e) });
-  g.start();
-  for (let i = 1; i <= 8; i++) {
-    g.time = i * 10 - 0.01;
-    g.hazards = [
-      {
-        kind: "circle",
-        x: 0,
-        y: 0,
-        r: 1,
-        vx: 0,
-        vy: 0,
-        age: 0,
-        warning: 1,
-        life: 10,
+test("five-second patterns finish without deleting or overlapping previous waves", () => {
+  for (let seed = 1; seed <= 12; seed++) {
+    let g,
+      transitions = 0,
+      sawHazards = false;
+    g = new Game({
+      random: rng(seed),
+      onEvent: (e) => {
+        if (e === "stage") {
+          assert.equal(g.hazards.length, 0);
+          assert(
+            Math.abs(
+              g.time - transitions * PATTERN_DURATION - PATTERN_DURATION,
+            ) < 0.02,
+          );
+          transitions++;
+        }
       },
-    ];
-    g.update(0.02);
-    assert.equal(g.stage, i);
-    assert.equal(g.pattern, i % 4);
-    assert.equal(g.hazards.length, 0);
-    assert(g.spawnIn > 0.8);
+    });
+    g.start();
+    g.end = () => {};
+    for (let i = 0; i < 120 * 60; i++) {
+      const previous = [...g.hazards],
+        ages = previous.map((h) => h.age);
+      g.update(1 / 120);
+      sawHazards ||= g.hazards.length > 0;
+      previous.forEach((h, j) => {
+        if (!g.hazards.includes(h)) {
+          assert(
+            h.age >= h.life,
+            "a live hazard must not be erased on transition",
+          );
+          assert(h.age > ages[j]);
+          if (h.kind !== "laser")
+            assert(
+              h.x + (h.r || h.w) < 0 ||
+                h.x - (h.r || 0) > 600 ||
+                h.y + (h.r || h.h) < 0 ||
+                h.y - (h.r || 0) > 640,
+              "moving hazard must leave the field naturally",
+            );
+        }
+      });
+    }
+    assert(sawHazards);
+    assert.equal(transitions, 12);
   }
-  assert.equal(events.filter((e) => e === "stage").length, 8);
+});
+test("late waves are not launched and an uncleared hazard blocks a transition", () => {
+  const g = new Game();
+  g.start();
+  g.stageTime = 4.9;
+  assert.equal(spawnWave(g), Infinity);
+  assert.equal(g.hazards.length, 0);
+  const h = {
+    kind: "circle",
+    x: 20,
+    y: 20,
+    r: 8,
+    vx: 100,
+    vy: 0,
+    age: 0,
+    warning: 0,
+    life: 1,
+  };
+  g.hazards = [h];
+  g.spawnIn = Infinity;
+  g.update(0.1);
+  assert.equal(g.stage, 0);
+  assert(g.hazards.includes(h));
+  advance(g, 0.5);
+  g.update(0.02);
+  assert.equal(g.stage, 1);
+  assert.equal(g.pattern, 1);
+});
+test("obstacle motion and lifecycle use double tempo while player and score stay real-time", () => {
+  const g = new Game();
+  g.start();
+  const h = {
+    kind: "circle",
+    x: 20,
+    y: 20,
+    r: 8,
+    vx: 100,
+    vy: 0,
+    age: 0,
+    warning: 0,
+    life: 2,
+  };
+  g.hazards = [h];
+  g.update(0.1, { x: 1 });
+  assert(Math.abs(h.x - 40) < 1e-8);
+  assert(Math.abs(h.age - 0.2) < 1e-8);
+  assert(Math.abs(g.time - 0.1) < 1e-8);
+  assert(Math.abs(g.player.x - 325) < 1e-8);
+  const initial = new Game();
+  initial.start();
+  const interval = spawnWave(initial);
+  assert(Math.abs(interval - 0.6) < 1e-8);
+  assert.equal(PATTERN_TEMPO, 2);
 });
 test("patterns leave gaps, telegraph danger and difficulty converges", () => {
   for (let phase = 0; phase < 4; phase++)
@@ -160,7 +239,7 @@ test("patterns leave gaps, telegraph danger and difficulty converges", () => {
       g.time = 200;
       g.wave = wave;
       const wait = spawnWave(g);
-      assert(wait > 0.5);
+      assert(wait > 0.25);
       assert(g.hazards.every((h) => h.warning >= 0.5));
       if (phase === 1) {
         const [a, b] = g.hazards;

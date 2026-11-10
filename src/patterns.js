@@ -1,5 +1,7 @@
 export const WIDTH = 600,
   HEIGHT = 640;
+export const PATTERN_DURATION = 5;
+export const PATTERN_TEMPO = 2;
 export const PATTERNS = [
   { name: "유성우", hint: "흐름 사이를 가로지르세요", color: "#ff718c" },
   { name: "틈새 비행", hint: "열린 통로를 찾으세요", color: "#ffbc77" },
@@ -7,11 +9,11 @@ export const PATTERNS = [
   { name: "파동", hint: "퍼지는 탄 사이를 통과하세요", color: "#ff83ba" },
 ];
 export function difficulty(time) {
-  return 1 + 1.35 * (1 - Math.exp(-time / 100));
+  return 1 + 1.35 * (1 - Math.exp((-time * PATTERN_TEMPO) / 100));
 }
 // Each wave is bounded. Gates always leave a traversable opening; lasers have a
 // fixed warning; edge emitters announce themselves before releasing a fan.
-export function spawnWave(game) {
+function populateWave(game) {
   const { random: r, pattern, time, player: p } = game;
   const d = difficulty(time),
     hazards = game.hazards;
@@ -124,7 +126,7 @@ export function spawnWave(game) {
       color: PATTERNS[2].color,
     });
     // A second line challenges later cycles, with the same generous warning.
-    if (time >= 60) {
+    if (time * PATTERN_TEMPO >= 60) {
       const offset = (vertical ? WIDTH : HEIGHT) * 0.35;
       const t = (target + offset) % (vertical ? WIDTH : HEIGHT);
       hazards.push({
@@ -165,4 +167,34 @@ export function spawnWave(game) {
     });
   }
   return 2.1 / Math.sqrt(d);
+}
+
+// Seconds in the original pattern clock until the entire shape (and trail)
+// leaves the arena. Unlike a fixed TTL, this never removes moving bullets
+// midway through their visible path.
+export function clearanceTime(h) {
+  if (h.kind === "laser") return h.life;
+  const margin = 24;
+  const right = h.kind === "circle" ? h.r : 0;
+  const left = h.kind === "circle" ? h.r : h.w;
+  const bottom = h.kind === "circle" ? h.r : 0;
+  const top = h.kind === "circle" ? h.r : h.h;
+  const exits = [];
+  if (h.vx > 0) exits.push((WIDTH + right + margin - h.x) / h.vx);
+  if (h.vx < 0) exits.push((h.x + left + margin) / -h.vx);
+  if (h.vy > 0) exits.push((HEIGHT + bottom + margin - h.y) / h.vy);
+  if (h.vy < 0) exits.push((h.y + top + margin) / -h.vy);
+  return h.warning + Math.min(...exits);
+}
+export function spawnWave(game) {
+  const pending = [];
+  const interval = populateWave({ ...game, hazards: pending }) / PATTERN_TEMPO;
+  const remaining = PATTERN_DURATION - game.stageTime;
+  // Stop launching early enough for all waves to finish within the five-second
+  // window. A late wave is skipped as a whole, preserving its intended gap.
+  for (const h of pending) h.life = clearanceTime(h);
+  if (pending.some((h) => h.life / PATTERN_TEMPO > remaining - 1 / 60))
+    return Infinity;
+  game.hazards.push(...pending);
+  return interval;
 }
