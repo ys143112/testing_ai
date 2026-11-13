@@ -10,7 +10,12 @@ export function readBest(storage, speed = 1) {
   }
 }
 export function saveBest(storage, time, best, speed = 1) {
-  const next = Math.max(best, Number.isFinite(time) ? time : 0);
+  // Another tab may have saved a higher record since this run started.
+  const next = Math.max(
+    Number.isFinite(best) && best > 0 ? best : 0,
+    Number.isFinite(time) && time > 0 ? time : 0,
+    readBest(storage, speed),
+  );
   try {
     storage.setItem(bestKey(speed), String(next));
     return { best: next, saved: true };
@@ -48,3 +53,4 @@ export function saveSpeed(storage, speed) {
     storage.setItem("ten-seconds.speed.v1", String(speed));
   } catch {}
 }
+
